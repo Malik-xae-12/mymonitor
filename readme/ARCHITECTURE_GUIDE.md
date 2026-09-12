@@ -18,6 +18,8 @@ graph TD
         CM["Connection Manager<br/>(Room-based WebSocket Multiplexer)"]
         LP["Leased Workspace Poller<br/>(Active-Viewer Leases Only)"]
         AS["Alert & Escalation Service<br/>(SLA Background Watchdog)"]
+        AI["AI Diagnostic Service<br/>(Google Gemini 3.6 Flash)"]
+        TL["Table Log Service<br/>(Lakehouse & Warehouse Telemetry)"]
         RL["Rate Limiter<br/>(asyncio.Semaphore = 5)"]
     end
 
@@ -30,10 +32,13 @@ graph TD
         T_PS["pipeline_schedules"]
         T_SC["sla_configs"]
         T_SI["sla_incidents"]
+        T_TL["table_log_mappings"]
+        T_AI["ai_error_diagnostics"]
     end
 
     subgraph External Services
         FABRIC["Microsoft Fabric REST APIs<br/>(/workspaces, /items, /jobs/instances, /queryactivityruns, /schedules)"]
+        GEMINI["Google AI Studio API<br/>(gemini-3.6-flash)"]
         SMTP["Gmail SMTP Server<br/>(smtp.gmail.com:587 TLS)"]
     end
 
@@ -50,6 +55,9 @@ graph TD
     LP -->|Fan-Out Snapshot| CM
     AS <-->|Monitor Incidents| DB
     AS -->|Dispatch L1/L2 Alert Emails| SMTP
+    AI <-->|Check Error Cache| DB
+    AI -->|Request Diagnosis| GEMINI
+    TL <-->|Store & Read Mappings| DB
 ```
 
 ---
@@ -238,6 +246,12 @@ erDiagram
 7. **`sla_incidents`**:
    - Tracks active, breached, escalated, and resolved failure incidents. Manages countdown deadlines, alert dispatches, and resolution audit trails.
 
+8. **`table_log_mappings`**:
+   - Stores workspace-specific Lakehouse / Warehouse IDs, schema names, and dynamic column mappings for Batch Header, Bronze Log, and Silver Log tables.
+
+9. **`ai_error_diagnostics`**:
+   - High-speed persistent cache of Google Gemini AI error diagnostics, keyed by SHA-256 error-signature hash. Guarantees instant (< 5ms) repeat retrieval with zero additional API cost.
+
 ### High-Performance Indexes
 ```sql
 CREATE INDEX IF NOT EXISTS idx_runs_ws ON pipeline_runs(workspace_id);
@@ -371,3 +385,79 @@ stateDiagram-v2
 - **Rich Failure Diagnostics**: Alert emails include full error code, failure reason, failed activity name (e.g. `Bronze To Silver NB`), timestamps, and direct portal link.
 - **Live Countdown Badge**: Failed pipelines display real-time second-by-second countdown badges (`SLA: 29m 45s left` with spinning icon) directly on the parent row.
 - **1-Click Resolution**: Clicking **Resolve** marks the incident resolved in SQLite, broadcasts the event across WebSockets, and immediately stops the escalation clock.
+
+---
+
+## 9. Google Gemini AI Diagnostics & Persistent Caching Architecture
+
+When a pipeline activity fails, human operators often spend valuable time deciphering raw JSON error dumps, Java tracebacks, or vague Fabric runtime errors. The **AI Diagnostic Engine** (`ai_diagnostic_service.py`) automates this process:
+
+### 1. Zero-Token Redundancy with Error Signature Hashing:
+- Each failure is reduced to a deterministic SHA-256 error signature hash:
+  $$\text{Hash} = \text{SHA256}(\text{pipelineName} + \text{activityType} + \text{errorCode} + \text{normalizedErrorMessage})$$
+- Before issuing any outbound request to Google AI Studio, SQLite table `ai_error_diagnostics` is queried by hash.
+- **Cache Hit:** If an identical error was analyzed previously (even across different runs), the diagnosis is returned in **< 5ms** with zero API tokens consumed.
+
+### 2. Prompt Engineering & Reasoning:
+- Utilizes Google Gemini 3.6 Flash (`gemini-3.6-flash`).
+- Formats structured diagnostics:
+  - **Summary**: Concise one-sentence explanation of what failed.
+  - **Category**: Error categorization (e.g. `SchemaMismatch`, `Authentication`, `ResourceExhaustion`, `NetworkTimeout`).
+  - **Root Cause**: Deep explanation of why the failure occurred.
+  - **Step-by-Step Fix Guide**: Actionable numbered steps with sample commands or portal configuration changes.
+  - **Prevention**: Best practices to prevent future recurrence.
+
+---
+
+## 10. Dynamic Table-Level Logging Architecture (Lakehouse & Warehouse Telemetry)
+
+Rather than hardcoding table names or schemas, the monitoring hub features a **100% dynamic Lakehouse / Warehouse introspection engine** (`table_log_service.py`):
+
+1. **Workspace Discovery:**
+   - Calls `GET /v1/workspaces/{id}/items?type=Lakehouse,Warehouse` to populate available storage items dynamically.
+2. **Schema & Column Discovery:**
+   - Queries table definitions dynamically from the selected artifact.
+3. **Dynamic Role Mapping (`table_log_mappings`):**
+   - Operators map custom table and column names for:
+     - **Batch Header Log:** Run ID, Batch Number, Start/End Timestamps.
+     - **Bronze Log:** Extracted record count, Status, Source Name (distinguishing `data load` vs `source delete`).
+     - **Silver Log:** Cleaned/transformed record count, Load timestamp, Error description.
+4. **End-to-End Correlation:**
+   - The UI matches `pipeline_run_id` to the Batch Header, navigates to ETL details, and renders side-by-side Bronze and Silver row-count transformations with status badges and error diagnostic modals.
+
+---
+
+## 11. Date-Based Telemetry & Schedule Forecast Engine
+
+To answer operational questions such as *"What pipelines ran yesterday?"* or *"What is scheduled to execute tomorrow?"*, `get_workspace_tree_by_date` implements dual-mode date filtering:
+
+### Mode A: Historical & Current Date Evaluation (Past / Today)
+- Queries `pipeline_runs` within `[target_start, target_end]`.
+- For each master pipeline:
+  - If executed: Attaches the latest run within that date window with complete activity trees and duration metrics.
+  - If not executed: Marks pipeline as **`Not Run`** with clean status badge and empty duration (`—`).
+- Computes aggregated metric cards:
+  $$\text{Total} = \text{Running} + \text{Succeeded} + \text{Failed} + \text{Cancelled} + \text{Not Run}$$
+
+### Mode B: Future Schedule Forecasting (Tomorrow / Next Week)
+- Because future runs do not yet exist, the engine inspects configured triggers in `pipeline_schedules`.
+- Evaluates recurrence rules:
+  - **Daily:** Triggers every day; flagged as `Scheduled` with configured execution time.
+  - **Weekly:** Compares target day-of-week (`Sunday`, `Monday`, etc.) against schedule's active days.
+  - **Specific Date:** Matches `next_run_time` timestamps against the target date.
+- Status is classified as **`Scheduled`** (purple badge with scheduled trigger time) or **`Not Scheduled`**.
+- Aggregates forecast metric cards:
+  $$\text{Total} = \text{Scheduled to Run} + \text{Not Scheduled}$$
+
+---
+
+## 12. Official Fabric Multi-Schedule Job Architecture
+
+In Microsoft Fabric, Data Pipelines support multiple independent triggers (e.g. Daily at 08:00 UTC and Weekly on Sundays at 00:00 UTC).
+
+### API Endpoint Correction:
+- Querying `/workspaces/{ws}/items/{pid}/schedules` returns `404 EntityNotFound` because schedules are job execution sub-resources.
+- The official endpoint is:
+  $$\text{GET } \text{https://api.fabric.microsoft.com/v1/workspaces/}\{ws\}/\text{items/}\{pid\}/\mathbf{jobs/Pipeline/schedules}$$
+- Returns a `value: [...]` array containing all configured schedules.
+- The backend parses all entries into individual schedule objects, allowing the frontend modal (`PipelineScheduleModal.jsx`) to display multi-schedule cards with trigger frequencies, active days, execution times, and timezones.

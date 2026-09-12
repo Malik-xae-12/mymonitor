@@ -1,16 +1,16 @@
 # Frontend: Microsoft Fabric Real-Time Job Monitoring Dashboard
 
-The frontend is a modern, high-performance, real-time React 19 application built with Vite, Tailwind CSS v4, and Lucide React icons. It provides sub-second live streaming telemetry, interactive hierarchical pipeline views, deep execution history, SLA configuration, and error diagnostics.
+The frontend is a modern, high-performance React 19 application built with Vite, Tailwind CSS v4, and Lucide React icons. It provides sub-second live streaming telemetry, date-based filtering covering Last Week to Next Week, Gemini AI error troubleshooting, dynamic Lakehouse/Warehouse table logging, multi-schedule inspection, and SLA configuration.
 
 ---
 
 ## Architecture & Technology Stack
 
 - **React 19:** Modern functional components with hooks and strict lifecycle control.
-- **Vite:** Next-generation frontend build tooling with ultra-fast Hot Module Replacement (HMR).
+- **Vite:** Next-generation frontend build tooling with ultra-fast Hot Module Replacement (HMR) and optimized production chunking.
 - **Tailwind CSS v4:** Utility-first CSS styling using modern CSS variables and dark-mode optimization.
 - **Lucide React:** Consistent, lightweight, accessible SVG icon library.
-- **WebSockets (`useWorkspaceMonitoring`):** Resilient streaming telemetry hook with automatic reconnect, exponential backoff, and instant snapshot ingestion.
+- **WebSockets (`useWorkspaceMonitoring`):** Resilient streaming telemetry hook with automatic reconnect, date-filter synchronization, and instant snapshot ingestion.
 - **ErrorBoundary:** Top-level error boundary wrapping the application to prevent any child component exception from breaking the dashboard.
 
 ---
@@ -18,39 +18,77 @@ The frontend is a modern, high-performance, real-time React 19 application built
 ## Component Hierarchy
 
 ```
-App.jsx (Root Coordinator)
+App.jsx (Root Coordinator & State Manager)
 │
-├── ErrorBoundary.jsx (Crash Shield)
-│
-├── DashboardHeader.jsx (Sticky Top Navigation)
+├── DashboardHeader.jsx (Sticky Top Navigation Bar)
 │   ├── WorkspaceSelector.jsx (Tenant-wide Searchable Dropdown)
-│   ├── Active Viewers Counter (👥 X active viewers)
-│   ├── Live WebSocket Status Pill (Pulsing Green / Reconnecting Amber)
-│   └── Summary Metric Cards (Total, Running, Succeeded, Failed)
+│   ├── Connection Badge (Pulsing Green 'Live Sync' / Amber 'Reconnecting...')
+│   ├── Active Viewers Counter (👥 X viewers)
+│   ├── Refresh Button (Manual Fabric Poll Sync)
+│   └── Table Log Config Button (Dynamic Lakehouse/Warehouse Mapping Launcher)
 │
-├── SlaIncidentBanner.jsx (Active SLA Breach Alert Banner + 1-Click Resolution)
-│
-├── PipelineTreeTable.jsx (Main Content Area)
-│   ├── Search & Status Filter Pills (All, Running, Failed, Succeeded, Never Run)
+├── PipelineTreeTable.jsx (Main Hierarchy & Filter Container)
+│   │
+│   ├── DateFilterBar.jsx (Date Range & Execution Filter Controls)
+│   │   ├── Search by Name (Real-time pipeline & activity search)
+│   │   ├── Quick Presets (Last Week, Yesterday, Today, Tomorrow, Next Week, Latest/All)
+│   │   ├── Day-by-Day Navigator (15-day interactive strip: Sep 05 → Sep 19)
+│   │   ├── Calendar Date Picker (<input type="date">)
+│   │   └── Dynamic Metric Cards / Status Tabs:
+│   │       ├── Past/Today: All, Running, Succeeded, Failed, Cancelled, Not Run
+│   │       └── Future Forecast: Total, Scheduled to Run, Not Scheduled
+│   │
 │   └── PipelineRow.jsx (Collapsible Pipeline Accordion)
-│       ├── SLA Status Badge (OK / Breached / InProgress Countdown)
-│       ├── Duration Badge (Calculated mm:ss / hh:mm:ss)
-│       ├── Action Buttons ([History], [SLA])
+│       ├── Status Badges (Running, Success, Failed, Cancelled, Scheduled, Not Run)
+│       ├── SLA Badges (Overdue days/hours/mins + 1-Click Green 'Resolve' Button)
+│       ├── Execution Timestamps & Dynamic Duration ('Upcoming' for scheduled runs)
+│       ├── Action Buttons:
+│       │   ├── [History] -> Opens RunHistoryModal
+│       │   ├── [Schedule] -> Opens PipelineScheduleModal
+│       │   ├── [SLA] -> Opens SlaConfigModal
+│       │   ├── [Table Logs] -> Opens TableLogDashboardModal
+│       │   └── [Error] -> Opens ErrorDetailModal (Failed activities only)
 │       │
 │       ├── ActivityList.jsx (Inner Pipeline Activity Telemetry)
-│       │   ├── Activity Type Icons (Copy, Notebook, ExecutePipeline, SQL, Script)
-│       │   ├── Live Status Spinners
-│       │   ├── Duration & Timestamps
+│       │   ├── Activity Type Icons (Copy, Notebook, ExecutePipeline, SQL, Lookup, etc.)
+│       │   ├── Status Badges & Timestamps
 │       │   └── [View Error] Button
 │       │
 │       └── Nested PipelineRow.jsx (Child Pipelines Triggered by ExecutePipeline)
 │
-├── Modals & Drawers
-│   ├── ErrorDetailModal.jsx (Deep Error Diagnostics & 1-Click Copy)
-│   ├── RunHistoryModal.jsx (Historical Runs Archive with Inner Activities & Errors)
-│   ├── SlaConfigModal.jsx (Warning/Breach Thresholds, L1/L2 Emails, Test Email Buttons)
-│   └── SchedulesDrawer.jsx (Slide-over Upcoming Schedule Telemetry)
+└── Modals & Drawers
+    ├── DateFilterBar.jsx (Integrated in Tree Table)
+    ├── ErrorDetailModal.jsx (Deep Error Diagnostics + Google Gemini AI Fix Guide)
+    ├── RunHistoryModal.jsx (Historical Runs Archive with Activities, Errors & Table Logs)
+    ├── PipelineScheduleModal.jsx (Multi-Schedule Cards: Daily, Weekly, Times, Days, Next Run)
+    ├── SlaConfigModal.jsx (Target Minutes, L1/L2 Emails, SMTP Test Buttons)
+    ├── SchedulesDrawer.jsx (Workspace-wide upcoming schedule drawer)
+    ├── TableLogConfigModal.jsx (Dynamic Lakehouse/Warehouse Schema & Column Mapping)
+    └── TableLogDashboardModal.jsx (Batch Header -> Bronze -> Silver Table Logs & Lineage)
 ```
+
+---
+
+## Key Feature Highlights
+
+### 1. Date-Based Filter Bar (`DateFilterBar.jsx`)
+- Replaces static top banners and duplicate metrics with an interactive, date-driven telemetry hub.
+- Highlights days with past recorded executions (emerald dots) and future schedule windows (purple dots).
+- Dynamically shifts status cards between past execution counts (*Succeeded, Failed, Cancelled, Not Run*) and future forecast counts (*Scheduled, Not Scheduled*).
+
+### 2. Google Gemini AI Diagnostics (`ErrorDetailModal.jsx`)
+- One-click **"Diagnose with AI"** button on any failed activity or pipeline run.
+- Generates categorized root-cause explanations and numbered step-by-step remediation steps.
+- Cached locally in SQLite for instant repeat loads.
+
+### 3. Dynamic Table Logging (`TableLogConfigModal.jsx` & `TableLogDashboardModal.jsx`)
+- Configure which Lakehouse or Warehouse to monitor with zero hardcoding.
+- Map custom table and column names for Batch Header, Bronze, and Silver logs.
+- Inspect real-time batch metrics, row counts, and data load vs source delete operations.
+
+### 4. Multi-Schedule Support (`PipelineScheduleModal.jsx`)
+- Renders dedicated schedule cards for pipelines with multiple schedules (e.g. Daily at 08:00 + Weekly on Sundays).
+- Displays trigger type, execution times, active days, timezone, and start/end dates.
 
 ---
 
@@ -71,4 +109,4 @@ The Vite development server runs on `http://localhost:3000` and automatically pr
 ```bash
 npm run build
 ```
-Compiles the application into `frontend/dist/`. The FastAPI backend automatically serves these static assets on `http://localhost:8000`.\n
+Compiles the application into `frontend/dist/` in < 1 second. The FastAPI backend automatically serves these static assets on `http://localhost:8000`.

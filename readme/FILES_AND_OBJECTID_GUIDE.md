@@ -80,7 +80,7 @@ Fabric expects the **Enterprise Service Principal Object ID**, not the Applicati
 ## 2. Complete File Directory & Component Breakdown
 
 ```
-RealPOC/
+mymonitor/
 ├── .env                               # Environment credentials, SMTP configuration & timeouts
 ├── add_sp_to_workspaces.py            # Automated bulk tenant workspace assignment script
 ├── verify_sp_access.py                # Standalone diagnostic test script
@@ -88,7 +88,7 @@ RealPOC/
 ├── README.md                          # Master project README (Comprehensive system guide)
 │
 ├── readme/                            # Dedicated technical documentation folder
-│   ├── ARCHITECTURE_GUIDE.md          # 4-tier optimization, SQLite WAL, schema, concurrency & SLA
+│   ├── ARCHITECTURE_GUIDE.md          # 4-tier optimization, SQLite WAL, 9-table catalog, concurrency & SLA
 │   ├── IMPLEMENTATION_AND_SCREENS.md  # Screen-by-screen UI walkthrough & requirements matrix
 │   └── FILES_AND_OBJECTID_GUIDE.md    # This file (Enterprise Object ID discovery & codebase map)
 │
@@ -96,7 +96,7 @@ RealPOC/
 │   ├── README.md                      # Backend architecture & developer guide
 │   ├── requirements.txt               # Backend Python dependencies
 │   ├── data/
-│   │   └── fabric_monitor.db          # High-speed SQLite WAL database
+│   │   └── fabric_monitor.db          # High-speed SQLite WAL database (9 tables)
 │   └── app/
 │       ├── __init__.py                # App package init & sys.path configuration
 │       ├── main.py                    # App entrypoint, lifespan poller, static UI hosting
@@ -106,15 +106,17 @@ RealPOC/
 │       ├── models/
 │       │   └── monitoring.py          # Pydantic schemas (PipelineRun, ActivityRun, SlaConfig, Incidents)
 │       ├── services/
-│       │   ├── db_service.py          # SQLite engine, schema, indexing, run caching, duration math
+│       │   ├── db_service.py          # SQLite engine, 9-table schema, indexing, run caching, date engine
 │       │   ├── fabric_client.py       # OAuth2 token caching & Fabric REST client
 │       │   ├── connection_manager.py  # WebSocket room manager (1-to-N multiplexing)
 │       │   ├── leased_poller.py       # On-demand poller (differential polling for InProgress runs)
 │       │   ├── tree_builder.py        # 100% dynamic ExecutePipeline parent-child hierarchy
 │       │   ├── alert_service.py       # SLA watchdog background worker for breach evaluation
-│       │   └── email_service.py       # Gmail SMTP dispatcher for L1/L2 HTML alerts
+│       │   ├── email_service.py       # Gmail SMTP dispatcher for L1/L2 HTML alerts
+│       │   ├── ai_diagnostic_service.py # Google Gemini 3.6 Flash diagnostics & SHA-256 error caching
+│       │   └── table_log_service.py   # Dynamic Lakehouse/Warehouse table logging & ETL lineage
 │       └── api/
-│           ├── routes_workspaces.py   # REST: list workspaces, pipelines, snapshot, history, schedules
+│           ├── routes_workspaces.py   # REST: list workspaces, pipelines, snapshot, history, schedules, table logs
 │           ├── routes_sla.py          # REST: SLA config CRUD, SMTP test email, incident resolution
 │           └── websocket_hub.py       # WS: /ws/workspaces/{workspace_id} with snapshot push
 │
@@ -131,14 +133,18 @@ RealPOC/
         │   └── useWorkspaceMonitoring.js # Auto-reconnecting WebSocket hook
         └── components/
             ├── WorkspaceSelector.jsx  # Searchable tenant-wide workspace dropdown
-            ├── DashboardHeader.jsx    # Live connection badge, viewers count & metrics
+            ├── DashboardHeader.jsx    # Live connection badge, viewers count & Table Log Config button
+            ├── DateFilterBar.jsx      # Name search, quick presets, 15-day strip & forecast tabs
             ├── PipelineTreeTable.jsx  # Hierarchical collapsible table with status filters
             ├── PipelineRow.jsx        # Pipeline row with duration, SLA badges, History/SLA buttons
             ├── ActivityList.jsx       # Granular activity telemetry & type icons
-            ├── ErrorDetailModal.jsx   # Deep error diagnostics modal & copy button
+            ├── ErrorDetailModal.jsx   # Gemini 3.6 Flash AI diagnostics, fix steps & raw output
             ├── RunHistoryModal.jsx    # Complete historical runs modal with inner activity inspection
             ├── SlaConfigModal.jsx     # SLA threshold configuration & live email test verification
             ├── SlaIncidentBanner.jsx  # Live breach alert banner with 1-click incident resolution
+            ├── PipelineScheduleModal.jsx # Multi-schedule cards (Daily, Weekly, days, UTC/local times)
+            ├── TableLogConfigModal.jsx   # Dynamic Lakehouse/Warehouse schema & column mapping modal
+            ├── TableLogDashboardModal.jsx # Full ETL table log lineage & row counts dashboard
             ├── SchedulesDrawer.jsx    # Slide-over drawer for scheduled next runs
             └── ErrorBoundary.jsx      # Global React crash protection component
 ```
@@ -148,13 +154,13 @@ RealPOC/
 ## 3. What Each File Actually Does
 
 ### Root Scripts & Configuration
-* **[.env](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/RealPOC/.env):**  
-  Stores the verified Microsoft Entra ID credentials (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`), Gmail SMTP credentials (`MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SERVER`), active/idle polling intervals (`3.5s` / `15.0s`), and maximum parallel Fabric requests (`5`).
-* **[add_sp_to_workspaces.py](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/RealPOC/add_sp_to_workspaces.py):**  
+* **`.env`:**  
+  Stores the verified Microsoft Entra ID credentials (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`), Gmail SMTP credentials (`MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SERVER`), active/idle polling intervals (`3.5s` / `15.0s`), maximum parallel Fabric requests (`5`), and optional Google Gemini API key (`GEMINI_API_KEY`).
+* **`add_sp_to_workspaces.py`:**  
   Automated bulk tenant workspace assignment script. Discovers all tenant workspaces using Tenant Admin APIs and assigns the Enterprise Service Principal (`22dd7329-500a-42ba-9ad6-64508eb6fec9`) as `Viewer` across all tenant workspaces.
-* **[verify_sp_access.py](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/RealPOC/verify_sp_access.py):**  
+* **`verify_sp_access.py`:**  
   Diagnostic script that authenticates with Entra ID, tests Fabric REST connectivity, and prints all accessible workspaces and pipelines.
-* **[check_pipeline_runs.py](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/RealPOC/check_pipeline_runs.py):**  
+* **`check_pipeline_runs.py`:**  
   Inspects recent execution run instances, start/end timestamps, and execution statuses for all pipelines in a workspace.
 
 ---
@@ -163,9 +169,9 @@ RealPOC/
 * **`main.py`:**  
   FastAPI application entrypoint. Configures CORS, initializes background workers (`leased_poller`, `alert_service`) during startup lifespan, mounts REST and WebSocket routers, and serves compiled frontend static files on port `8000`.
 * **`services/db_service.py`:**  
-  High-speed SQLite persistence engine. Manages WAL mode, 30s busy timeout, tables (`workspaces`, `pipelines`, `pipeline_runs`, `activity_runs`, `pipeline_schedules`, `sla_configs`, `sla_incidents`), indexes, duration calculations, and sub-15ms cached tree generation.
+  High-speed SQLite persistence engine. Manages WAL mode, 30s busy timeout, **9 core tables** (`workspaces`, `pipelines`, `pipeline_runs`, `activity_runs`, `pipeline_schedules`, `sla_configs`, `sla_incidents`, `table_log_mappings`, `ai_error_diagnostics`), composite indexes, duration calculations, date-filtering engine (`get_workspace_tree_by_date`), and sub-15ms cached tree generation.
 * **`services/fabric_client.py`:**  
-  Entra ID OAuth2 client and Microsoft Fabric REST API client with automatic token renewal.
+  Entra ID OAuth2 client and Microsoft Fabric REST API client with automatic token renewal and official schedule endpoint queries (`/items/{itemId}/jobs/Pipeline/schedules`).
 * **`services/tree_builder.py`:**  
   Dynamic hierarchy engine. Discovers child pipelines from `ExecutePipeline` activities (`childJobInstanceId` / `pipelineRunId`), nests them under parent runs, and removes child pipelines from the top-level workspace list.
 * **`services/connection_manager.py`:**  
@@ -176,39 +182,52 @@ RealPOC/
   SLA watchdog worker. Runs every 10 seconds, evaluates active run durations against SLA thresholds, records incidents in `sla_incidents`, and triggers L1/L2 email alerts.
 * **`services/email_service.py`:**  
   Gmail SMTP client. Formats responsive HTML email alert cards with failure details, durations, and error logs, and dispatches them via `smtp.gmail.com:587 TLS`.
+* **`services/ai_diagnostic_service.py`:**  
+  Google Gemini 3.6 Flash AI diagnostic engine (`gemini-3.6-flash`). Parses error codes, failure types, and driver logs to generate structured root-cause explanations, probable cause checklists, numbered remediation guides, and ready-to-run fix scripts. Caches analyses by SHA-256 error signature in SQLite table `ai_error_diagnostics` for sub-5ms instant responses.
+* **`services/table_log_service.py`:**  
+  Dynamic Lakehouse and Warehouse table logging service. Introspects SQL Endpoint metadata (`sys.tables`, `sys.columns`), saves user-configured column mappings in `table_log_mappings`, and correlates `pipeline_run_id` across Batch Header $\rightarrow$ Bronze Log $\rightarrow$ Silver Log tables with row-count and operation tracking (`Data Load` vs `Source Delete`).
 * **`api/routes_workspaces.py`:**  
-  REST endpoints for listing workspaces, pipelines, hierarchical snapshot, execution history, and upcoming schedules.
+  REST endpoints for listing workspaces, pipelines, hierarchical snapshot, execution history, upcoming schedules, date-filtered pipeline trees, AI diagnostics, and table log queries.
 * **`api/routes_sla.py`:**  
   REST endpoints for fetching/updating SLA configs, testing email dispatch, and resolving active incidents.
 * **`api/websocket_hub.py`:**  
-  WebSocket endpoint `/ws/workspaces/{workspace_id}`.
+  WebSocket endpoint `/ws/workspaces/{workspace_id}` for real-time telemetry streaming.
 
 ---
 
 ### Frontend Components (`frontend/src/`)
 * **`App.jsx`:**  
-  Root React coordinator managing WebSocket telemetry, modals, and main views.
+  Root React coordinator managing WebSocket telemetry, date filtering state, modal toggles, and main views.
 * **`hooks/useWorkspaceMonitoring.js`:**  
   Custom hook managing resilient WebSocket streaming with auto-reconnection and exponential backoff.
 * **`components/DashboardHeader.jsx`:**  
-  Top bar displaying live WebSocket status badge, active viewers count (`👥 X active viewers`), and 4 summary metric cards.
+  Top bar displaying live WebSocket status badge, active viewers count (`👥 X active viewers`), and button to launch the Lakehouse/Warehouse Table Log Config modal.
 * **`components/WorkspaceSelector.jsx`:**  
   Searchable dropdown that discovers all tenant workspaces and allows switching with zero page reloads.
+* **`components/DateFilterBar.jsx`:**  
+  Interactive date navigation bar featuring text search, quick presets (`Last Week`, `Yesterday`, `Today`, `Tomorrow`, `Next Week`, `Latest / All`), 15-day strip with activity dots (green = recorded runs, purple = future forecast), and status filter tabs.
 * **`components/PipelineTreeTable.jsx`:**  
-  Hierarchical table with search filter and status filter pills.
+  Hierarchical table with search filter, status filter pills, and parent-child pipeline nesting.
 * **`components/PipelineRow.jsx`:**  
-  Pipeline row rendering calculated duration, trigger type, SLA badges, Run History button, SLA button, and collapsible child pipeline accordions.
+  Pipeline row rendering calculated duration, trigger type, formatted SLA badges (`+4d 3h 15m`), 1-click incident resolve button, History button, Schedule button, SLA button, and Table Logs button.
 * **`components/ActivityList.jsx`:**  
   Granular activity telemetry table with type icons, live status spinners, calculated duration, and "View Error" buttons.
 * **`components/ErrorDetailModal.jsx`:**  
-  Diagnostic modal showing error code, target, error message, raw JSON output, and 1-click "Copy Diagnostics".
+  Deep diagnostic modal enriched with Google Gemini 3.6 Flash AI diagnostics, Root Cause analysis, likely causes, step-by-step fix guide, 1-click script copy, instant cache badge (`⚡ Instant Cached`), and raw execution JSON.
 * **`components/RunHistoryModal.jsx`:**  
   Full historical execution archive modal showing all past runs, inner activities, durations, and error diagnostics.
 * **`components/SlaConfigModal.jsx`:**  
-  Modal to configure SLA warning/breach thresholds, L1/L2 emails, and test SMTP connectivity.
+  Modal to configure SLA warning/breach thresholds, L1/L2 emails, and test SMTP connectivity with live toast feedback.
 * **`components/SlaIncidentBanner.jsx`:**  
   Top banner for active SLA breaches with 1-click "Resolve" button.
+* **`components/PipelineScheduleModal.jsx`:**  
+  Dedicated modal displaying all configured trigger schedules for a pipeline, featuring Daily and Weekly recurrence cards, trigger times in UTC/local timezone, days of week, and next run calculations.
+* **`components/TableLogConfigModal.jsx`:**  
+  4-step dynamic schema and column mapping modal to introspect Lakehouse/Warehouse SQL Endpoints and map Batch Header, Bronze Log, and Silver Log tables with zero hardcoding.
+* **`components/TableLogDashboardModal.jsx`:**  
+  Full ETL table log dashboard modal correlating `pipeline_run_id` to Batch Header, displaying 5 KPI cards, Silver and Bronze layer overviews, operation filters (`Data Load` vs `Source Delete`), row-count progressions, and integrated Gemini AI table-load debugging.
 * **`components/SchedulesDrawer.jsx`:**  
-  Slide-over drawer detailing upcoming scheduled runs and frequencies.
+  Slide-over drawer detailing upcoming scheduled runs and frequencies across the entire workspace.
 * **`components/ErrorBoundary.jsx`:**  
-  Global React crash shield preventing unhandled UI exceptions from causing a blank screen.\n
+  Global React crash shield preventing unhandled UI exceptions from causing a blank screen.
+\n

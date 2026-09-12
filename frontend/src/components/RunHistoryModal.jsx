@@ -9,7 +9,8 @@ import {
   RefreshCw, 
   PlayCircle, 
   Layers, 
-  Loader2 
+  Loader2,
+  Database
 } from 'lucide-react';
 import { StatusBadge, formatDateTime, formatDuration, getActivityIcon, computeDuration } from './PipelineRow';
 
@@ -202,7 +203,7 @@ function HistorySubPipelineActivityRow({ activity, depth = 1, onSelectError }) {
   );
 }
 
-export default function RunHistoryModal({ workspaceId, pipeline, isOpen, onClose, onSelectError }) {
+export default function RunHistoryModal({ workspaceId, pipeline, isOpen, onClose, onSelectError, onOpenTableLogs }) {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [expandedRunIds, setExpandedRunIds] = useState(new Set());
@@ -369,38 +370,59 @@ export default function RunHistoryModal({ workspaceId, pipeline, isOpen, onClose
                           </td>
 
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {isFailed && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  let errPayload = r.error;
-                                  let actName = pipeline.pipelineName;
-                                  let actType = 'Historical Pipeline Run';
-                                  if (!errPayload || !errPayload.message) {
-                                    const failedAct = r.activities?.find(a => a.status?.toLowerCase() === 'failed' && a.error?.message);
-                                    if (failedAct) {
-                                      errPayload = failedAct.error;
-                                      actName = `${pipeline.pipelineName} → ${failedAct.activityName}`;
-                                      actType = failedAct.activityType;
+                            <div className="flex items-center justify-end gap-1.5">
+                              {onOpenTableLogs && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenTableLogs({
+                                      id: r.id,
+                                      pipelineId: pipeline.pipelineId,
+                                      pipelineName: pipeline.pipelineName,
+                                      startTime: r.startTime,
+                                      status: r.status
+                                    });
+                                  }}
+                                  title="View Table Level Logging for this execution run"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 transition shadow-sm"
+                                >
+                                  <Database className="w-3.5 h-3.5 text-cyan-400" />
+                                  <span>Table Logs</span>
+                                </button>
+                              )}
+                              {isFailed && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    let errPayload = r.error;
+                                    let actName = pipeline.pipelineName;
+                                    let actType = 'Historical Pipeline Run';
+                                    if (!errPayload || !errPayload.message) {
+                                      const failedAct = r.activities?.find(a => a.status?.toLowerCase() === 'failed' && a.error?.message);
+                                      if (failedAct) {
+                                        errPayload = failedAct.error;
+                                        actName = `${pipeline.pipelineName} → ${failedAct.activityName}`;
+                                        actType = failedAct.activityType;
+                                      }
                                     }
-                                  }
-                                  onSelectError({
-                                    activityName: actName,
-                                    activityType: actType,
-                                    status: r.status,
-                                    activityRunStart: r.startTime,
-                                    activityRunEnd: r.endTime,
-                                    durationInMs: r.durationInMs,
-                                    error: errPayload,
-                                    output: errPayload?.rawError || r.error?.rawError
-                                  });
-                                }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition shadow-sm"
-                              >
-                                <AlertCircle className="w-3.5 h-3.5" />
-                                <span>Error</span>
-                              </button>
-                            )}
+                                    onSelectError({
+                                      activityName: actName,
+                                      activityType: actType,
+                                      status: r.status,
+                                      activityRunStart: r.startTime,
+                                      activityRunEnd: r.endTime,
+                                      durationInMs: r.durationInMs,
+                                      error: errPayload,
+                                      output: errPayload?.rawError || r.error?.rawError
+                                    });
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition shadow-sm"
+                                >
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  <span>Error</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
 

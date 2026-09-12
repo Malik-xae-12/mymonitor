@@ -50,6 +50,7 @@ class PipelineSchedule(BaseModel):
     scheduleType: Optional[str] = None
     nextRunTime: Optional[str] = None
     timeZone: Optional[str] = None
+    schedules: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
     rawConfiguration: Optional[Dict[str, Any]] = None
 
 class WebSocketMessage(BaseModel):

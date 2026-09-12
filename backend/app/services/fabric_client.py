@@ -171,15 +171,20 @@ class FabricClient:
         return await rate_limiter.run(_call())
 
     async def get_pipeline_schedules(self, workspace_id: str, pipeline_id: str) -> Optional[Dict[str, Any]]:
-        """Get the schedule configuration for a pipeline (if configured)."""
+        """Get all schedule configurations for a pipeline from Fabric REST API."""
         headers = await self._get_headers()
-        url = f"{self.base_url}/workspaces/{workspace_id}/items/{pipeline_id}/schedules"
+        primary_url = f"{self.base_url}/workspaces/{workspace_id}/items/{pipeline_id}/jobs/Pipeline/schedules"
+        fallback_url = f"{self.base_url}/workspaces/{workspace_id}/items/{pipeline_id}/schedules"
 
         async def _call():
             async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.get(url, headers=headers)
+                res = await client.get(primary_url, headers=headers)
                 if res.status_code == 200:
                     return res.json()
+                # Fallback to generic item schedules endpoint if primary 404s
+                res_fb = await client.get(fallback_url, headers=headers)
+                if res_fb.status_code == 200:
+                    return res_fb.json()
                 return None
 
         return await rate_limiter.run(_call())

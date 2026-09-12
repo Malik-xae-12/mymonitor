@@ -1,83 +1,63 @@
 import React, { useState } from 'react';
-import { Search, Layers, Activity } from 'lucide-react';
+import { Layers } from 'lucide-react';
 import PipelineRow from './PipelineRow';
+import DateFilterBar from './DateFilterBar';
 
 export default function PipelineTreeTable({ 
   workspaceId, 
-  pipelines, 
+  pipelines = [], 
+  metrics = {},
+  dateFilter = {},
+  dateFilterInfo = {},
+  onDateFilterChange,
   onSelectError, 
   isLoading,
   onOpenRunHistory,
   onOpenSchedule,
   onOpenSlaConfig,
-  onResolveIncident
+  onResolveIncident,
+  onOpenTableLogs
 }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
-  // Exact counts across all pipelines
-  const totalCount = pipelines.length;
-  const runningCount = pipelines.filter(p => ['inprogress', 'running'].includes(p.status?.toLowerCase())).length;
-  const failedCount = pipelines.filter(p => p.status?.toLowerCase() === 'failed').length;
-  const succeededCount = pipelines.filter(p => ['completed', 'succeeded', 'success'].includes(p.status?.toLowerCase())).length;
-  const cancelledCount = pipelines.filter(p => ['cancelled', 'canceled'].includes(p.status?.toLowerCase())).length;
-  const neverRunCount = pipelines.filter(p => ['no runs', 'notstarted', 'never executed', 'noruns'].includes(p.status?.toLowerCase())).length;
-
   const filteredPipelines = pipelines.filter((pipe) => {
-    // Name filter
-    const matchesSearch = pipe.pipelineName?.toLowerCase().includes(search.toLowerCase());
+    // 1. Search filter by pipeline or activity name
+    const term = search.trim().toLowerCase();
+    const matchesSearch = !term || 
+      pipe.pipelineName?.toLowerCase().includes(term) ||
+      (pipe.activities && pipe.activities.some(a => a.activityName?.toLowerCase().includes(term)));
     
-    // Status filter
+    // 2. Status filter
     const s = pipe.status?.toLowerCase() || '';
     if (statusFilter === 'ALL') return matchesSearch;
     if (statusFilter === 'RUNNING') return matchesSearch && ['inprogress', 'running'].includes(s);
     if (statusFilter === 'FAILED') return matchesSearch && s === 'failed';
     if (statusFilter === 'CANCELLED') return matchesSearch && ['cancelled', 'canceled'].includes(s);
     if (statusFilter === 'SUCCEEDED') return matchesSearch && ['completed', 'succeeded', 'success'].includes(s);
-    if (statusFilter === 'NO_RUNS') return matchesSearch && ['no runs', 'notstarted', 'never executed', 'noruns'].includes(s);
+    if (statusFilter === 'NO_RUNS') return matchesSearch && ['no runs', 'notstarted', 'never executed', 'noruns', 'not run', 'not_run'].includes(s);
+    if (statusFilter === 'SCHEDULED') return matchesSearch && ['scheduled', 'upcoming'].includes(s);
+    if (statusFilter === 'NOT_SCHEDULED') return matchesSearch && ['not scheduled', 'not run', 'no runs'].includes(s);
     return matchesSearch;
   });
 
   return (
     <div className="space-y-4">
-      {/* Table Filter Controls */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 shadow-sm backdrop-blur-sm">
-        {/* Search Input */}
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Search pipelines or activities..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition"
-          />
-        </div>
-
-        {/* Status Pill Filters with Dynamic Counts */}
-        <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-          {[
-            { id: 'ALL', label: `All (${totalCount})` },
-            { id: 'RUNNING', label: `Running (${runningCount})` },
-            { id: 'FAILED', label: `Failed (${failedCount})` },
-            { id: 'CANCELLED', label: `Cancelled (${cancelledCount})` },
-            { id: 'SUCCEEDED', label: `Succeeded (${succeededCount})` },
-            { id: 'NO_RUNS', label: `Never Run (${neverRunCount})` },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setStatusFilter(tab.id)}
-              className={`px-3 py-1 text-xs font-medium rounded-lg transition whitespace-nowrap ${
-                statusFilter === tab.id
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/80"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Dynamic Date-Based Telemetry & Execution Filter Bar */}
+      <DateFilterBar
+        search={search}
+        onSearchChange={setSearch}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        metrics={metrics}
+        dateFilter={dateFilter}
+        dateFilterInfo={dateFilterInfo}
+        onDateFilterChange={(newFilter) => {
+          setStatusFilter('ALL'); // Reset status tab on date change for clarity
+          if (onDateFilterChange) onDateFilterChange(newFilter);
+        }}
+        workspaceId={workspaceId}
+      />
 
       {/* Unified Tree-Grid Data Table */}
       <div>
@@ -121,6 +101,7 @@ export default function PipelineTreeTable({
                     onOpenSchedule={onOpenSchedule}
                     onOpenSlaConfig={onOpenSlaConfig}
                     onResolveIncident={onResolveIncident}
+                    onOpenTableLogs={onOpenTableLogs}
                   />
                 ))}
               </tbody>

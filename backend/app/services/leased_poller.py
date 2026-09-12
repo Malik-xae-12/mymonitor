@@ -334,16 +334,45 @@ class LeasedWorkspacePoller:
                 pname = p.get("displayName")
                 async with semaphore:
                     sched_data = await fabric_client.get_pipeline_schedules(workspace_id, pid)
-                if sched_data and sched_data.get("enabled", False):
-                    cfg = sched_data.get("configuration", {})
+                raw_list = []
+                if isinstance(sched_data, dict):
+                    if "value" in sched_data and isinstance(sched_data["value"], list):
+                        raw_list = sched_data["value"]
+                    elif "configuration" in sched_data or "enabled" in sched_data:
+                        raw_list = [sched_data]
+                elif isinstance(sched_data, list):
+                    raw_list = sched_data
+
+                all_scheds = []
+                for item in raw_list:
+                    if isinstance(item, dict):
+                        cfg = item.get("configuration") or {}
+                        all_scheds.append({
+                            "id": item.get("id") or "",
+                            "enabled": bool(item.get("enabled", True)),
+                            "scheduleType": cfg.get("type") or item.get("type") or "Custom",
+                            "timeZone": cfg.get("localTimeZoneId") or cfg.get("timeZone") or "UTC",
+                            "nextRunTime": cfg.get("nextRunTime") or cfg.get("startDateTime"),
+                            "times": cfg.get("times", []),
+                            "days": cfg.get("days", []),
+                            "startDate": cfg.get("startDateTime"),
+                            "endDate": cfg.get("endDateTime"),
+                            "rawConfiguration": cfg
+                        })
+
+                active = [s for s in all_scheds if s.get("enabled")]
+                primary = active[0] if active else (all_scheds[0] if all_scheds else None)
+
+                if primary:
                     return {
                         "pipelineId": pid,
                         "pipelineName": pname,
-                        "enabled": True,
-                        "scheduleType": cfg.get("type", "Custom"),
-                        "nextRunTime": cfg.get("nextRunTime") or cfg.get("startDateTime"),
-                        "timeZone": cfg.get("localTimeZoneId", "UTC"),
-                        "rawConfiguration": cfg
+                        "enabled": bool(active),
+                        "scheduleType": primary.get("scheduleType", "Custom"),
+                        "nextRunTime": primary.get("nextRunTime"),
+                        "timeZone": primary.get("timeZone", "UTC"),
+                        "schedules": all_scheds,
+                        "rawConfiguration": {"schedules": all_scheds, "raw": sched_data}
                     }
                 return {
                     "pipelineId": pid,
@@ -352,6 +381,7 @@ class LeasedWorkspacePoller:
                     "scheduleType": "Manual / None",
                     "nextRunTime": None,
                     "timeZone": None,
+                    "schedules": [],
                     "rawConfiguration": sched_data
                 }
 

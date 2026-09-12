@@ -61,6 +61,24 @@ app.add_middleware(
 app.include_router(workspaces_router)
 app.include_router(websocket_router)
 
+from backend.app.api.routes_workspaces import AiFixRequest
+
+@app.post("/api/diagnostics/ai-fix")
+async def global_diagnose_pipeline_error(payload: AiFixRequest):
+    """Global endpoint to analyze failures using Google Gemini 3.6 Flash."""
+    from backend.app.services.ai_diagnostic_service import ai_diagnostic_service
+    return await ai_diagnostic_service.diagnose_failure(
+        pipeline_name=payload.pipelineName or "Pipeline",
+        activity_name=payload.activityName or "Activity",
+        activity_type=payload.activityType or "Execution",
+        error_code=payload.errorCode or "N/A",
+        error_message=payload.errorMessage,
+        failure_type=payload.failureType or "UserError",
+        target=payload.target or "",
+        raw_error=payload.rawError,
+        force_refresh=payload.forceRefresh or False
+    )
+
 @app.get("/health")
 async def health_check():
     return {

@@ -1,5 +1,6 @@
 import json
 import logging
+import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 import aiosqlite
@@ -132,12 +133,49 @@ class DatabaseService:
                 );
             """)
 
+            # 8. Table Log Mappings
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS table_log_mappings (
+                    workspace_id TEXT PRIMARY KEY,
+                    artifact_type TEXT,
+                    artifact_id TEXT,
+                    artifact_name TEXT,
+                    server_fqdn TEXT,
+                    database_name TEXT,
+                    batch_header_schema TEXT,
+                    batch_header_table TEXT,
+                    batch_header_mapping TEXT,
+                    bronze_schema TEXT,
+                    bronze_table TEXT,
+                    bronze_mapping TEXT,
+                    silver_schema TEXT,
+                    silver_table TEXT,
+                    silver_mapping TEXT,
+                    updated_at TEXT
+                );
+            """)
+
+            # 9. AI Error Diagnostics Cache
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS ai_error_diagnostics (
+                    error_hash TEXT PRIMARY KEY,
+                    error_code TEXT,
+                    error_message TEXT,
+                    activity_type TEXT,
+                    pipeline_name TEXT,
+                    diagnosis_json TEXT,
+                    created_at TEXT
+                );
+            """)
+
             # Indexes for instant querying
             await db.execute("CREATE INDEX IF NOT EXISTS idx_runs_ws ON pipeline_runs(workspace_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_runs_pipe ON pipeline_runs(pipeline_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON pipeline_runs(status);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_act_run ON activity_runs(pipeline_run_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inc_ws ON sla_incidents(workspace_id);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_mapping_ws ON table_log_mappings(workspace_id);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_diag_hash ON ai_error_diagnostics(error_hash);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inc_pipe ON sla_incidents(pipeline_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inc_status ON sla_incidents(status);")
 
@@ -939,5 +977,635 @@ class DatabaseService:
             reverse=True
         )
         return top_level
+
+    @staticmethod
+    def _is_schedule_active_in_range(sched_row: dict, start_date: datetime.date, end_date: datetime.date) -> tuple[bool, str]:
+        if not sched_row or not sched_row.get("enabled"):
+            return False, ""
+
+        raw = {}
+        if sched_row.get("raw_configuration"):
+            try:
+                raw = json.loads(sched_row["raw_configuration"])
+            except Exception:
+                raw = {}
+
+        schedules_list = []
+        if isinstance(raw, dict) and "value" in raw and isinstance(raw["value"], list):
+            schedules_list = raw["value"]
+        elif isinstance(raw, list):
+            schedules_list = raw
+        elif raw:
+            schedules_list = [raw]
+        else:
+            schedules_list = [{
+                "enabled": sched_row.get("enabled"),
+                "configuration": {
+                    "type": sched_row.get("schedule_type"),
+                    "nextRunTime": sched_row.get("next_run_time")
+                }
+            }]
+
+        curr = start_date
+        while curr <= end_date:
+            target_iso = curr.isoformat()
+            target_weekday = curr.strftime("%A").lower()
+
+            for item in schedules_list:
+                if not item.get("enabled", True):
+                    continue
+                cfg = item.get("configuration") or item
+                stype = (cfg.get("type") or item.get("scheduleType") or sched_row.get("schedule_type") or "").lower()
+                times = cfg.get("times") or []
+                time_str = times[0] if times else "08:00"
+
+                start_dt_str = cfg.get("startDateTime") or item.get("startDate")
+                end_dt_str = cfg.get("endDateTime") or item.get("endDate")
+                if start_dt_str and str(start_dt_str)[:10] > target_iso:
+                    continue
+                if end_dt_str and str(end_dt_str)[:10] < target_iso:
+                    continue
+
+                next_run = cfg.get("nextRunTime") or item.get("nextRunTime") or sched_row.get("next_run_time")
+                if next_run and str(next_run)[:10] == target_iso:
+                    return True, f"{target_iso} {str(next_run)[11:16]}"
+
+                if stype in ["daily", "day"]:
+                    return True, f"{target_iso} {time_str}"
+                elif stype in ["weekly", "week"]:
+                    days = [str(d).lower() for d in (cfg.get("days") or [])]
+                    if target_weekday in days:
+                        return True, f"{target_iso} {time_str}"
+
+            curr += datetime.timedelta(days=1)
+
+        return False, ""
+
+    async def get_workspace_tree_by_date(
+        self,
+        workspace_id: str,
+        date_preset: str = "latest",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Builds the date-filtered execution hierarchy and forecast for a workspace.
+        Supports presets: 'latest', 'yesterday' (last day), 'today', 'tomorrow' (next day), 'last_week', 'next_week', 'custom'.
+        Computes accurate summary metrics (total, running, succeeded, failed, cancelled, notRun, scheduled, notScheduled).
+        """
+        today_date = datetime.datetime.now(datetime.timezone.utc).date()
+        preset = (date_preset or "latest").lower().strip()
+        is_future = False
+
+        if preset in ("yesterday", "last_day", "lastday"):
+            target_start = today_date - datetime.timedelta(days=1)
+            target_end = target_start
+        elif preset == "today":
+            target_start = today_date
+            target_end = today_date
+        elif preset in ("tomorrow", "next_day", "nextday"):
+            target_start = today_date + datetime.timedelta(days=1)
+            target_end = target_start
+            is_future = True
+        elif preset in ("last_week", "lastweek"):
+            target_start = today_date - datetime.timedelta(days=7)
+            target_end = today_date - datetime.timedelta(days=1)
+        elif preset in ("next_week", "nextweek"):
+            target_start = today_date + datetime.timedelta(days=1)
+            target_end = today_date + datetime.timedelta(days=7)
+            is_future = True
+        elif preset == "custom":
+            try:
+                target_start = datetime.date.fromisoformat(start_date) if start_date else today_date
+            except Exception:
+                target_start = today_date
+            try:
+                target_end = datetime.date.fromisoformat(end_date) if end_date else target_start
+            except Exception:
+                target_end = target_start
+            if target_start > today_date:
+                is_future = True
+        else:
+            target_start = None
+            target_end = None
+
+        # Fetch available run dates in DB for this workspace
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT DISTINCT substr(COALESCE(start_time, end_time), 1, 10) as run_date
+                FROM pipeline_runs
+                WHERE workspace_id = ? AND status != 'No Runs' AND start_time IS NOT NULL
+                ORDER BY 1 DESC
+            """, (workspace_id,))
+            date_rows = await cursor.fetchall()
+            available_dates = [r["run_date"] for r in date_rows if r["run_date"]]
+
+        # 1. Latest preset delegates to get_workspace_latest_tree
+        if target_start is None or target_end is None:
+            latest_tree = await self.get_workspace_latest_tree(workspace_id)
+            total = len(latest_tree)
+            running = sum(1 for p in latest_tree if p.get("status", "").lower() in ("inprogress", "running"))
+            succeeded = sum(1 for p in latest_tree if p.get("status", "").lower() in ("completed", "succeeded", "success"))
+            failed = sum(1 for p in latest_tree if p.get("status", "").lower() == "failed")
+            cancelled = sum(1 for p in latest_tree if p.get("status", "").lower() in ("cancelled", "canceled"))
+            not_run = sum(1 for p in latest_tree if p.get("status", "").lower() in ("no runs", "noruns", "notstarted", "never executed", "not run"))
+
+            return {
+                "workspaceId": workspace_id,
+                "dateFilter": {
+                    "preset": "latest",
+                    "startDate": None,
+                    "endDate": None,
+                    "isFuture": False,
+                    "availableRunDates": available_dates
+                },
+                "metrics": {
+                    "total": total,
+                    "running": running,
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "cancelled": cancelled,
+                    "notRun": not_run,
+                    "scheduled": 0,
+                    "notScheduled": 0
+                },
+                "pipelines": latest_tree
+            }
+
+        # 2. Query master pipelines
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT id, displayName, is_master, prefix
+                FROM pipelines
+                WHERE workspace_id = ? AND is_master = 1
+                ORDER BY displayName ASC
+            """, (workspace_id,))
+            pipeline_rows = await cursor.fetchall()
+            if not pipeline_rows:
+                cursor = await db.execute("""
+                    SELECT id, displayName, is_master, prefix
+                    FROM pipelines
+                    WHERE workspace_id = ?
+                    ORDER BY displayName ASC
+                """, (workspace_id,))
+                pipeline_rows = await cursor.fetchall()
+
+            # SLA configs
+            cursor = await db.execute("""
+                SELECT pipeline_id, l1_email, l2_email, sla_minutes
+                FROM sla_configs
+                WHERE workspace_id = ?
+            """, (workspace_id,))
+            sla_rows = await cursor.fetchall()
+            sla_by_pid = {s["pipeline_id"]: dict(s) for s in sla_rows}
+
+            # Schedules
+            cursor = await db.execute("""
+                SELECT pipeline_id, enabled, schedule_type, next_run_time, time_zone, raw_configuration
+                FROM pipeline_schedules
+                WHERE workspace_id = ?
+            """, (workspace_id,))
+            sched_rows = await cursor.fetchall()
+            sched_by_pid = {s["pipeline_id"]: dict(s) for s in sched_rows}
+
+        if is_future:
+            # 3. Future Forecast Mode
+            forecast_pipelines = []
+            scheduled_count = 0
+            not_scheduled_count = 0
+
+            for p in pipeline_rows:
+                pid = p["id"]
+                pname = p["displayName"]
+                sched_info = sched_by_pid.get(pid)
+                is_sched, sched_time_str = self._is_schedule_active_in_range(sched_info, target_start, target_end)
+
+                sla_cfg = sla_by_pid.get(pid, {
+                    "pipelineId": pid,
+                    "workspaceId": workspace_id,
+                    "l1Email": "uiaptracker@gmail.com",
+                    "l2Email": "uiaptracker@gmail.com",
+                    "slaMinutes": 30
+                })
+
+                if is_sched:
+                    status_str = "Scheduled"
+                    scheduled_count += 1
+                    start_time_val = f"{sched_time_str}Z" if "T" in sched_time_str else f"{sched_time_str}:00Z"
+                    invoke_val = "Schedule"
+                else:
+                    status_str = "Not Scheduled"
+                    not_scheduled_count += 1
+                    start_time_val = None
+                    invoke_val = "None"
+
+                forecast_pipelines.append({
+                    "id": f"sched-{pid}",
+                    "pipelineId": pid,
+                    "pipelineName": pname,
+                    "workspaceId": workspace_id,
+                    "status": status_str,
+                    "startTime": start_time_val,
+                    "endTime": None,
+                    "durationInMs": 0,
+                    "invokeType": invoke_val,
+                    "isChild": False,
+                    "parentRunId": None,
+                    "parentActivityName": None,
+                    "error": None,
+                    "activities": [],
+                    "childPipelines": [],
+                    "slaConfig": sla_cfg,
+                    "incident": None,
+                    "schedule": sched_info
+                })
+
+            forecast_pipelines.sort(
+                key=lambda x: (x["status"] == "Scheduled", x["pipelineName"]),
+                reverse=True
+            )
+
+            return {
+                "workspaceId": workspace_id,
+                "dateFilter": {
+                    "preset": preset,
+                    "startDate": target_start.isoformat(),
+                    "endDate": target_end.isoformat(),
+                    "isFuture": True,
+                    "availableRunDates": available_dates
+                },
+                "metrics": {
+                    "total": len(pipeline_rows),
+                    "running": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "cancelled": 0,
+                    "notRun": not_scheduled_count,
+                    "scheduled": scheduled_count,
+                    "notScheduled": not_scheduled_count
+                },
+                "pipelines": forecast_pipelines
+            }
+
+        # 4. Past / Current Mode
+        s_iso = target_start.isoformat()
+        e_iso = target_end.isoformat()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT r.id, r.pipeline_id, r.pipeline_name, r.workspace_id, r.status,
+                       r.start_time, r.end_time, r.duration_in_ms, r.invoke_type,
+                       r.is_child, r.parent_run_id, r.parent_activity_name, r.failure_reason
+                FROM pipeline_runs r
+                INNER JOIN (
+                    SELECT pipeline_id, MAX(COALESCE(start_time, '1970-01-01')) as max_start
+                    FROM pipeline_runs
+                    WHERE workspace_id = ?
+                      AND substr(COALESCE(start_time, end_time), 1, 10) >= ?
+                      AND substr(COALESCE(start_time, end_time), 1, 10) <= ?
+                      AND status != 'No Runs'
+                    GROUP BY pipeline_id
+                ) win ON r.pipeline_id = win.pipeline_id AND COALESCE(r.start_time, '1970-01-01') = win.max_start
+                WHERE r.workspace_id = ?
+            """, (workspace_id, s_iso, e_iso, workspace_id))
+            period_runs = await cursor.fetchall()
+            runs_by_pid = {r["pipeline_id"]: dict(r) for r in period_runs}
+
+            # Incidents in period
+            cursor = await db.execute("""
+                SELECT id, pipeline_id, pipeline_name, pipeline_run_id, status, failed_at, sla_target_time,
+                       l1_notified_at, l2_escalated_at, resolved_at, resolved_by, error_message
+                FROM sla_incidents
+                WHERE workspace_id = ? AND status IN ('ACTIVE', 'ESCALATED_L2', 'RESOLVED')
+                ORDER BY failed_at DESC
+            """, (workspace_id,))
+            inc_rows = await cursor.fetchall()
+            incident_by_run_id = {}
+            for inc in inc_rows:
+                run_id = inc["pipeline_run_id"]
+                if run_id not in incident_by_run_id:
+                    incident_by_run_id[run_id] = dict(inc)
+
+        period_pipelines = []
+        run_objects_by_id: Dict[str, Dict[str, Any]] = {}
+
+        for p in pipeline_rows:
+            pid = p["id"]
+            pname = p["displayName"]
+            p_run = runs_by_pid.get(pid)
+
+            sla_cfg = sla_by_pid.get(pid, {
+                "pipelineId": pid,
+                "workspaceId": workspace_id,
+                "l1Email": "uiaptracker@gmail.com",
+                "l2Email": "uiaptracker@gmail.com",
+                "slaMinutes": 30
+            })
+            sched_info = sched_by_pid.get(pid)
+
+            if p_run:
+                run_id = p_run["id"]
+                fail_err = None
+                if p_run["failure_reason"]:
+                    try:
+                        fail_err = json.loads(p_run["failure_reason"])
+                    except Exception:
+                        fail_err = None
+
+                inc = incident_by_run_id.get(run_id)
+
+                dur_ms = p_run["duration_in_ms"]
+                if (dur_ms is None or dur_ms == 0) and p_run["start_time"] and p_run["end_time"]:
+                    try:
+                        clean_st = str(p_run["start_time"]).replace("Z", "+00:00")
+                        clean_et = str(p_run["end_time"]).replace("Z", "+00:00")
+                        st_dt = datetime.datetime.fromisoformat(clean_st)
+                        et_dt = datetime.datetime.fromisoformat(clean_et)
+                        dur_ms = int(max(0, (et_dt - st_dt).total_seconds() * 1000))
+                    except Exception:
+                        dur_ms = None
+
+                run_obj = {
+                    "id": run_id,
+                    "pipelineId": pid,
+                    "pipelineName": pname,
+                    "workspaceId": workspace_id,
+                    "status": p_run["status"],
+                    "startTime": p_run["start_time"],
+                    "endTime": p_run["end_time"],
+                    "durationInMs": dur_ms,
+                    "invokeType": p_run["invoke_type"] or "Manual",
+                    "isChild": False,
+                    "parentRunId": None,
+                    "parentActivityName": None,
+                    "error": fail_err,
+                    "activities": [],
+                    "childPipelines": [],
+                    "slaConfig": sla_cfg,
+                    "incident": inc,
+                    "schedule": sched_info
+                }
+                run_objects_by_id[run_id] = run_obj
+                period_pipelines.append(run_obj)
+            else:
+                run_obj = {
+                    "id": f"norun-{pid}",
+                    "pipelineId": pid,
+                    "pipelineName": pname,
+                    "workspaceId": workspace_id,
+                    "status": "Not Run",
+                    "startTime": None,
+                    "endTime": None,
+                    "durationInMs": 0,
+                    "invokeType": "None",
+                    "isChild": False,
+                    "parentRunId": None,
+                    "parentActivityName": None,
+                    "error": None,
+                    "activities": [],
+                    "childPipelines": [],
+                    "slaConfig": sla_cfg,
+                    "incident": None,
+                    "schedule": sched_info
+                }
+                run_objects_by_id[run_obj["id"]] = run_obj
+                period_pipelines.append(run_obj)
+
+        # Batch load activities for all runs in period
+        run_ids = [r["id"] for r in period_pipelines if not r["id"].startswith("norun-")]
+        if run_ids:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                placeholders = ",".join(["?"] * len(run_ids))
+                cursor = await db.execute(f"""
+                    SELECT activity_run_id, pipeline_run_id, activity_name, activity_type,
+                           status, start_time, end_time, duration_in_ms, error, output,
+                           child_pipeline_run_id, child_pipeline_data
+                    FROM activity_runs
+                    WHERE pipeline_run_id IN ({placeholders})
+                    ORDER BY start_time ASC
+                """, run_ids)
+                act_rows = await cursor.fetchall()
+
+                for a in act_rows:
+                    prun_id = a["pipeline_run_id"]
+                    if prun_id in run_objects_by_id:
+                        err_val = None
+                        if a["error"]:
+                            try:
+                                err_val = json.loads(a["error"])
+                            except Exception:
+                                pass
+                        out_val = None
+                        if a["output"]:
+                            try:
+                                out_val = json.loads(a["output"])
+                            except Exception:
+                                pass
+
+                        child_pipe = None
+                        if a["child_pipeline_data"]:
+                            try:
+                                child_pipe = json.loads(a["child_pipeline_data"])
+                            except Exception:
+                                pass
+
+                        run_objects_by_id[prun_id]["activities"].append({
+                            "activityRunId": a["activity_run_id"],
+                            "pipelineRunId": prun_id,
+                            "activityName": a["activity_name"],
+                            "activityType": a["activity_type"],
+                            "status": a["status"],
+                            "activityRunStart": a["start_time"],
+                            "activityRunEnd": a["end_time"],
+                            "durationInMs": a["duration_in_ms"],
+                            "error": err_val,
+                            "output": out_val,
+                            "childPipelineRunId": a["child_pipeline_run_id"],
+                            "childPipeline": child_pipe
+                        })
+
+        for r_obj in period_pipelines:
+            if (r_obj["durationInMs"] is None or r_obj["durationInMs"] == 0) and r_obj.get("activities"):
+                act_sum = sum(a.get("durationInMs") or 0 for a in r_obj["activities"])
+                if act_sum > 0:
+                    r_obj["durationInMs"] = act_sum
+
+        period_pipelines.sort(
+            key=lambda x: (x.get("startTime") is not None, x.get("startTime") or "", x.get("pipelineName", "")),
+            reverse=True
+        )
+
+        total = len(pipeline_rows)
+        running = sum(1 for p in period_pipelines if p.get("status", "").lower() in ("inprogress", "running"))
+        succeeded = sum(1 for p in period_pipelines if p.get("status", "").lower() in ("completed", "succeeded", "success"))
+        failed = sum(1 for p in period_pipelines if p.get("status", "").lower() == "failed")
+        cancelled = sum(1 for p in period_pipelines if p.get("status", "").lower() in ("cancelled", "canceled"))
+        not_run = sum(1 for p in period_pipelines if p.get("status", "").lower() in ("no runs", "noruns", "notstarted", "never executed", "not run"))
+
+        return {
+            "workspaceId": workspace_id,
+            "dateFilter": {
+                "preset": preset,
+                "startDate": s_iso,
+                "endDate": e_iso,
+                "isFuture": False,
+                "availableRunDates": available_dates
+            },
+            "metrics": {
+                "total": total,
+                "running": running,
+                "succeeded": succeeded,
+                "failed": failed,
+                "cancelled": cancelled,
+                "notRun": not_run,
+                "scheduled": 0,
+                "notScheduled": 0
+            },
+            "pipelines": period_pipelines
+        }
+
+    async def get_table_log_mapping(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch saved table log mapping for a workspace."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM table_log_mappings WHERE workspace_id = ?;", (workspace_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            for k in ["batch_header_mapping", "bronze_mapping", "silver_mapping"]:
+                if res.get(k):
+                    try:
+                        res[k] = json.loads(res[k])
+                    except Exception:
+                        pass
+            return res
+
+    async def save_table_log_mapping(
+        self,
+        workspace_id: str,
+        artifact_type: str,
+        artifact_id: str,
+        artifact_name: str,
+        server_fqdn: str,
+        database_name: str,
+        batch_header_schema: str,
+        batch_header_table: str,
+        batch_header_mapping: Dict[str, Any],
+        bronze_schema: str,
+        bronze_table: str,
+        bronze_mapping: Dict[str, Any],
+        silver_schema: str,
+        silver_table: str,
+        silver_mapping: Dict[str, Any],
+        updated_at: str
+    ):
+        """Save or update table log mapping for a workspace."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT INTO table_log_mappings (
+                    workspace_id, artifact_type, artifact_id, artifact_name,
+                    server_fqdn, database_name,
+                    batch_header_schema, batch_header_table, batch_header_mapping,
+                    bronze_schema, bronze_table, bronze_mapping,
+                    silver_schema, silver_table, silver_mapping,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    artifact_type=excluded.artifact_type,
+                    artifact_id=excluded.artifact_id,
+                    artifact_name=excluded.artifact_name,
+                    server_fqdn=excluded.server_fqdn,
+                    database_name=excluded.database_name,
+                    batch_header_schema=excluded.batch_header_schema,
+                    batch_header_table=excluded.batch_header_table,
+                    batch_header_mapping=excluded.batch_header_mapping,
+                    bronze_schema=excluded.bronze_schema,
+                    bronze_table=excluded.bronze_table,
+                    bronze_mapping=excluded.bronze_mapping,
+                    silver_schema=excluded.silver_schema,
+                    silver_table=excluded.silver_table,
+                    silver_mapping=excluded.silver_mapping,
+                    updated_at=excluded.updated_at;
+            """, (
+                workspace_id,
+                artifact_type,
+                artifact_id,
+                artifact_name,
+                server_fqdn,
+                database_name,
+                batch_header_schema,
+                batch_header_table,
+                json.dumps(batch_header_mapping),
+                bronze_schema,
+                bronze_table,
+                json.dumps(bronze_mapping),
+                silver_schema,
+                silver_table,
+                json.dumps(silver_mapping),
+                updated_at
+            ))
+            await db.commit()
+
+    async def delete_table_log_mapping(self, workspace_id: str):
+        """Delete/reset table log mapping for a workspace."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM table_log_mappings WHERE workspace_id = ?;", (workspace_id,))
+            await db.commit()
+
+    async def get_cached_ai_diagnosis(self, error_hash: str) -> Optional[Dict[str, Any]]:
+        """Retrieves cached AI diagnosis by error signature hash."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT error_hash, error_code, error_message, activity_type, pipeline_name, diagnosis_json, created_at
+                FROM ai_error_diagnostics
+                WHERE error_hash = ?;
+            """, (error_hash,))
+            row = await cursor.fetchone()
+            if row:
+                try:
+                    diag = json.loads(row["diagnosis_json"])
+                    diag["cached"] = True
+                    diag["cachedAt"] = row["created_at"]
+                    return diag
+                except Exception as ex:
+                    logger.warning(f"Failed to parse cached diagnosis JSON for hash {error_hash}: {ex}")
+            return None
+
+    async def save_ai_diagnosis(
+        self,
+        error_hash: str,
+        error_code: str,
+        error_message: str,
+        activity_type: str,
+        pipeline_name: str,
+        diagnosis: Dict[str, Any]
+    ):
+        """Stores AI diagnosis in SQLite cache."""
+        async with aiosqlite.connect(self.db_path) as db:
+            import datetime
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            await db.execute("""
+                INSERT INTO ai_error_diagnostics (
+                    error_hash, error_code, error_message, activity_type, pipeline_name, diagnosis_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(error_hash) DO UPDATE SET
+                    diagnosis_json=excluded.diagnosis_json,
+                    created_at=excluded.created_at;
+            """, (
+                error_hash,
+                error_code or "",
+                error_message or "",
+                activity_type or "",
+                pipeline_name or "",
+                json.dumps(diagnosis),
+                now_iso
+            ))
+            await db.commit()
 
 db_service = DatabaseService()

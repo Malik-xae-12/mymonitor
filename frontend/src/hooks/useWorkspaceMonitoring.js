@@ -1,7 +1,27 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 
-export function useWorkspaceMonitoring(workspaceId) {
+export function useWorkspaceMonitoring(
+  workspaceId, 
+  dateFilter = { preset: 'latest', startDate: null, endDate: null }
+) {
   const [pipelineTree, setPipelineTree] = useState([]);
+  const [metrics, setMetrics] = useState({
+    total: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    cancelled: 0,
+    notRun: 0,
+    scheduled: 0,
+    notScheduled: 0
+  });
+  const [dateFilterInfo, setDateFilterInfo] = useState({
+    preset: 'latest',
+    startDate: null,
+    endDate: null,
+    isFuture: false,
+    availableRunDates: []
+  });
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [viewersCount, setViewersCount] = useState(0);
@@ -9,30 +29,75 @@ export function useWorkspaceMonitoring(workspaceId) {
   const [isLoading, setIsLoading] = useState(false);
 
   const activeWorkspaceIdRef = useRef(workspaceId);
+  const dateFilterRef = useRef(dateFilter);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const abortControllerRef = useRef(null);
 
   useEffect(() => {
     activeWorkspaceIdRef.current = workspaceId;
-  }, [workspaceId]);
+    dateFilterRef.current = dateFilter;
+  }, [workspaceId, dateFilter]);
 
-  const connectToWorkspace = useCallback((targetWorkspaceId) => {
-    if (!targetWorkspaceId) {
-      setPipelineTree([]);
-      setIsConnected(false);
-      setIsLoading(false);
-      return;
-    }
+  // Fetch REST snapshot with date filter
+  const fetchSnapshot = useCallback((targetWorkspaceId, filter) => {
+    if (!targetWorkspaceId) return;
 
-    // 1. Immediately abort previous REST fetch if in flight
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    // 2. Immediately close previous WebSocket
+    setIsLoading(true);
+    const preset = filter?.preset || 'latest';
+    const sDt = filter?.startDate || '';
+    const eDt = filter?.endDate || '';
+    const url = `/api/workspaces/${targetWorkspaceId}/snapshot?date_preset=${encodeURIComponent(preset)}&start_date=${encodeURIComponent(sDt)}&end_date=${encodeURIComponent(eDt)}`;
+
+    fetch(url, { signal: abortController.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (activeWorkspaceIdRef.current === targetWorkspaceId) {
+          setPipelineTree(json.pipelines || []);
+          if (json.metrics) setMetrics(json.metrics);
+          if (json.dateFilter) setDateFilterInfo(json.dateFilter);
+          setLastUpdated(new Date().toISOString());
+          setIsLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          console.warn("Snapshot fetch warning:", err);
+          if (activeWorkspaceIdRef.current === targetWorkspaceId) {
+            setIsLoading(false);
+          }
+        }
+      });
+  }, []);
+
+  const connectToWorkspace = useCallback((targetWorkspaceId) => {
+    if (!targetWorkspaceId) {
+      setPipelineTree([]);
+      setMetrics({
+        total: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+        notRun: 0,
+        scheduled: 0,
+        notScheduled: 0
+      });
+      setIsConnected(false);
+      setIsLoading(false);
+      return;
+    }
+
+    // Close previous WebSocket
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -46,35 +111,15 @@ export function useWorkspaceMonitoring(workspaceId) {
       wsRef.current = null;
     }
 
-    // 3. Clear out previous workspace data so no stale pipelines show
+    // Clear previous workspace state
     setPipelineTree([]);
     setIsConnected(false);
-    setIsLoading(true);
     setError(null);
 
-    // 4. Fetch initial fast REST snapshot from SQLite
-    fetch(`/api/workspaces/${targetWorkspaceId}/snapshot`, { signal: abortController.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((json) => {
-        if (activeWorkspaceIdRef.current === targetWorkspaceId) {
-          setPipelineTree(json.pipelines || []);
-          setLastUpdated(new Date().toISOString());
-          setIsLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (err.name !== 'AbortError') {
-          console.warn("Initial snapshot fetch warning:", err);
-          if (activeWorkspaceIdRef.current === targetWorkspaceId) {
-            setIsLoading(false);
-          }
-        }
-      });
+    // Initial snapshot fetch
+    fetchSnapshot(targetWorkspaceId, dateFilterRef.current);
 
-    // 5. Open new WebSocket connection for the selected workspace
+    // Open WebSocket connection
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/ws/workspaces/${targetWorkspaceId}`;
@@ -98,13 +143,15 @@ export function useWorkspaceMonitoring(workspaceId) {
         const message = JSON.parse(event.data);
         if (message.type === 'FULL_SNAPSHOT') {
           if (message.workspaceId === targetWorkspaceId) {
-            setPipelineTree(message.data || []);
-            setLastUpdated(message.timestamp || new Date().toISOString());
-            setViewersCount(message.viewersCount || 1);
-            setIsLoading(false);
+            // Only update tree from live socket if on 'latest' view
+            if (!dateFilterRef.current?.preset || dateFilterRef.current?.preset === 'latest') {
+              setPipelineTree(message.data || []);
+              setLastUpdated(message.timestamp || new Date().toISOString());
+              setViewersCount(message.viewersCount || 1);
+              setIsLoading(false);
+            }
           }
         } else if (message.type === 'INCIDENT_CREATED') {
-          // Update incident on matching pipeline
           const inc = message.incident;
           setPipelineTree((prev) =>
             prev.map((p) => {
@@ -172,8 +219,9 @@ export function useWorkspaceMonitoring(workspaceId) {
         }
       }
     };
-  }, []);
+  }, [fetchSnapshot]);
 
+  // Connect on workspace change
   useEffect(() => {
     connectToWorkspace(workspaceId);
 
@@ -187,6 +235,13 @@ export function useWorkspaceMonitoring(workspaceId) {
       }
     };
   }, [workspaceId, connectToWorkspace]);
+
+  // Re-fetch snapshot when dateFilter changes
+  useEffect(() => {
+    if (workspaceId) {
+      fetchSnapshot(workspaceId, dateFilter);
+    }
+  }, [workspaceId, dateFilter.preset, dateFilter.startDate, dateFilter.endDate, fetchSnapshot]);
 
   const resolveIncident = async (incidentId) => {
     if (!workspaceId || !incidentId) return;
@@ -222,11 +277,16 @@ export function useWorkspaceMonitoring(workspaceId) {
   const refresh = () => {
     if (workspaceId) {
       setIsLoading(true);
-      fetch(`/api/workspaces/${workspaceId}/snapshot?force_sync=true`)
+      const preset = dateFilterRef.current?.preset || 'latest';
+      const sDt = dateFilterRef.current?.startDate || '';
+      const eDt = dateFilterRef.current?.endDate || '';
+      fetch(`/api/workspaces/${workspaceId}/snapshot?force_sync=true&date_preset=${encodeURIComponent(preset)}&start_date=${encodeURIComponent(sDt)}&end_date=${encodeURIComponent(eDt)}`)
         .then((res) => res.json())
         .then((json) => {
           if (activeWorkspaceIdRef.current === workspaceId) {
             setPipelineTree(json.pipelines || []);
+            if (json.metrics) setMetrics(json.metrics);
+            if (json.dateFilter) setDateFilterInfo(json.dateFilter);
             setLastUpdated(new Date().toISOString());
             setIsLoading(false);
           }
@@ -237,6 +297,8 @@ export function useWorkspaceMonitoring(workspaceId) {
 
   return {
     pipelineTree,
+    metrics,
+    dateFilterInfo,
     isConnected,
     lastUpdated,
     viewersCount,

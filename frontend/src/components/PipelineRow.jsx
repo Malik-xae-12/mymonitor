@@ -154,18 +154,34 @@ export function StatusBadge({ status }) {
       </span>
     );
   }
+  if (s === 'scheduled' || s === 'upcoming') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+        <Calendar className="w-3 h-3 text-purple-400" />
+        Scheduled
+      </span>
+    );
+  }
+  if (s === 'not scheduled') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-900 border border-slate-800 text-slate-500">
+        <Clock className="w-3 h-3 text-slate-600" />
+        Not Scheduled
+      </span>
+    );
+  }
+  if (s === 'not run' || s === 'not_run' || s === 'no runs' || s === 'noruns') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-900 border border-slate-800 text-slate-400">
+        <Clock className="w-3 h-3 text-slate-500" />
+        Not Run
+      </span>
+    );
+  }
   if (s === 'notstarted' || s === 'not started' || s === 'queued') {
     return (
       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
         Not Started
-      </span>
-    );
-  }
-  if (s === 'no runs' || s === 'noruns') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
-        <Clock className="w-3 h-3" />
-        No Runs Yet
       </span>
     );
   }
@@ -201,14 +217,31 @@ export function SlaCountdownBadge({ incident, onResolve }) {
 
   if (incident.status === 'ESCALATED_L2' || diffMs <= 0) {
     const overdueMs = Math.abs(diffMs);
-    const overdueMin = Math.floor(overdueMs / 60000);
-    const overdueSec = Math.floor((overdueMs % 60000) / 1000);
+    const totalSec = Math.floor(overdueMs / 1000);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+
+    let overdueText = '';
+    if (days > 0) {
+      overdueText = `+${days}d ${hours}h ${minutes}m`;
+    } else if (hours > 0) {
+      overdueText = `+${hours}h ${minutes}m ${seconds}s`;
+    } else {
+      overdueText = `+${minutes}m ${seconds}s`;
+    }
+
+    const totalOverdueMinutes = Math.floor(overdueMs / 60000);
 
     return (
       <div className="inline-flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20 animate-pulse">
+        <span 
+          title={`SLA breach overdue by ${totalOverdueMinutes.toLocaleString()} minutes (${overdueText}). Incident is awaiting operator resolution.`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20 animate-pulse cursor-help"
+        >
           <AlertOctagon className="w-3 h-3 text-rose-400 shrink-0" />
-          <span>SLA Breached (+{overdueMin}m {overdueSec}s)</span>
+          <span>SLA Breached ({overdueText})</span>
         </span>
         {onResolve && (
           <button
@@ -319,7 +352,7 @@ function ActivityRow({ activity, depth, onSelectError }) {
   );
 }
 
-function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHistory, onOpenSchedule, onOpenSlaConfig, onResolveIncident }) {
+function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHistory, onOpenSchedule, onOpenSlaConfig, onResolveIncident, onOpenTableLogs }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const child = activity.childPipeline;
   const hasInnerActivities = child?.activities && child.activities.length > 0;
@@ -440,6 +473,7 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
                   onOpenSchedule={onOpenSchedule}
                   onOpenSlaConfig={onOpenSlaConfig}
                   onResolveIncident={onResolveIncident}
+                  onOpenTableLogs={onOpenTableLogs}
                 />
               );
             }
@@ -464,6 +498,7 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
               onOpenSchedule={onOpenSchedule}
               onOpenSlaConfig={onOpenSlaConfig}
               onResolveIncident={onResolveIncident}
+              onOpenTableLogs={onOpenTableLogs}
             />
           ))}
 
@@ -492,7 +527,8 @@ export default function PipelineRow({
   onOpenRunHistory,
   onOpenSchedule,
   onOpenSlaConfig,
-  onResolveIncident
+  onResolveIncident,
+  onOpenTableLogs
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const hasActivities = pipeline.activities && pipeline.activities.length > 0;
@@ -555,14 +591,24 @@ export default function PipelineRow({
                     Sub-pipeline
                   </span>
                 )}
-                {!pipeline.id?.startsWith("norun-") && (
+                {pipeline.status?.toLowerCase() === 'scheduled' ? (
+                  <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-purple-950/40 text-purple-300 border border-purple-500/30">
+                    Scheduled Trigger
+                  </span>
+                ) : !pipeline.id?.startsWith("norun-") && (
                   <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-400 border border-slate-700">
                     Latest Run #{pipeline.id?.slice(0, 8)}
                   </span>
                 )}
               </div>
               <div className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">
-                {pipeline.id?.startsWith("norun-") ? (
+                {pipeline.status?.toLowerCase() === 'scheduled' ? (
+                  <span className="text-purple-400">
+                    Trigger: {pipeline.startTime ? formatDateTime(pipeline.startTime) : 'Configured Recurrence'}
+                  </span>
+                ) : pipeline.status?.toLowerCase() === 'not run' ? (
+                  <span>Did not execute on this date</span>
+                ) : pipeline.id?.startsWith("norun-") ? (
                   "Never executed"
                 ) : (
                   <span>
@@ -612,7 +658,13 @@ export default function PipelineRow({
 
         {/* Duration */}
         <td className="py-3 px-3 font-mono text-xs text-slate-200 font-medium whitespace-nowrap">
-          {formatDuration(computeDuration(pipeline))}
+          {pipeline.status?.toLowerCase() === 'scheduled' ? (
+            <span className="text-purple-400 font-sans text-xs font-semibold">Upcoming</span>
+          ) : pipeline.status?.toLowerCase() === 'not run' ? (
+            <span className="text-slate-500 font-sans text-xs">—</span>
+          ) : (
+            formatDuration(computeDuration(pipeline))
+          )}
         </td>
 
         {/* Actions Column */}
@@ -663,6 +715,22 @@ export default function PipelineRow({
               >
                 <Bell className="w-3.5 h-3.5 text-amber-400" />
                 <span className="hidden xl:inline">SLA</span>
+              </button>
+            )}
+
+            {/* Table Logs Button */}
+            {onOpenTableLogs && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenTableLogs(pipeline);
+                }}
+                title="View Lakehouse/Warehouse Table Level Logging"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 transition hover:text-white shadow-sm"
+              >
+                <Database className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="hidden xl:inline">Table Logs</span>
               </button>
             )}
 

@@ -6,6 +6,8 @@ import SchedulesDrawer from './components/SchedulesDrawer';
 import RunHistoryModal from './components/RunHistoryModal';
 import PipelineScheduleModal from './components/PipelineScheduleModal';
 import SlaConfigModal from './components/SlaConfigModal';
+import TableLogConfigModal from './components/TableLogConfigModal';
+import TableLogDashboardModal from './components/TableLogDashboardModal';
 import { useWorkspaceMonitoring } from './hooks/useWorkspaceMonitoring';
 
 export default function App() {
@@ -15,16 +17,25 @@ export default function App() {
   const [selectedHistoryPipeline, setSelectedHistoryPipeline] = useState(null);
   const [selectedSchedulePipeline, setSelectedSchedulePipeline] = useState(null);
   const [selectedSlaPipeline, setSelectedSlaPipeline] = useState(null);
+  const [selectedTableLogPipeline, setSelectedTableLogPipeline] = useState(null);
+  const [isTableLogConfigOpen, setIsTableLogConfigOpen] = useState(false);
+  const [dateFilter, setDateFilter] = useState({
+    preset: 'latest',
+    startDate: null,
+    endDate: null
+  });
 
   const {
     pipelineTree,
+    metrics,
+    dateFilterInfo,
     isConnected,
     lastUpdated,
     viewersCount,
     isLoading,
     refresh,
     resolveIncident
-  } = useWorkspaceMonitoring(workspaceId);
+  } = useWorkspaceMonitoring(workspaceId, dateFilter);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -37,33 +48,26 @@ export default function App() {
         lastUpdated={lastUpdated}
         onRefresh={refresh}
         pipelines={pipelineTree}
+        onOpenTableLogConfig={() => setIsTableLogConfigOpen(true)}
       />
 
       {/* Main dashboard content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* Info Banner */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs">
-          <div className="flex items-center gap-2 text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-            <span>
-              Real-time synchronization active. Main view displays the latest execution for each master pipeline with nested child activities.
-            </span>
-          </div>
-          <div className="text-slate-500 font-mono text-[11px]">
-            Last sync: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : "Connecting..."}
-          </div>
-        </div>
-
-        {/* Pipeline Hierarchy Tree Table */}
+        {/* Pipeline Hierarchy Tree Table with Date & Execution Filter Bar */}
         <PipelineTreeTable
           workspaceId={workspaceId}
           pipelines={pipelineTree}
+          metrics={metrics}
+          dateFilter={dateFilter}
+          dateFilterInfo={dateFilterInfo}
+          onDateFilterChange={setDateFilter}
           onSelectError={setSelectedErrorActivity}
           isLoading={isLoading}
           onOpenRunHistory={(pipeline) => setSelectedHistoryPipeline(pipeline)}
           onOpenSchedule={(pipeline) => setSelectedSchedulePipeline(pipeline)}
           onOpenSlaConfig={(pipeline) => setSelectedSlaPipeline(pipeline)}
           onResolveIncident={resolveIncident}
+          onOpenTableLogs={(pipeline) => setSelectedTableLogPipeline(pipeline)}
         />
       </main>
 
@@ -75,6 +79,7 @@ export default function App() {
           isOpen={!!selectedHistoryPipeline}
           onClose={() => setSelectedHistoryPipeline(null)}
           onSelectError={setSelectedErrorActivity}
+          onOpenTableLogs={(pipeline) => setSelectedTableLogPipeline(pipeline)}
         />
       )}
 
@@ -112,6 +117,30 @@ export default function App() {
         workspaceId={workspaceId}
         isOpen={isSchedulesOpen}
         onClose={() => setIsSchedulesOpen(false)}
+      />
+
+      {/* Table-Level Logging Dashboard Modal */}
+      {selectedTableLogPipeline && (
+        <TableLogDashboardModal
+          workspaceId={workspaceId}
+          pipeline={selectedTableLogPipeline}
+          isOpen={!!selectedTableLogPipeline}
+          onClose={() => setSelectedTableLogPipeline(null)}
+          onOpenConfig={() => setIsTableLogConfigOpen(true)}
+        />
+      )}
+
+      {/* Lakehouse / Warehouse & Column Mapping Configuration Modal */}
+      <TableLogConfigModal
+        workspaceId={workspaceId}
+        isOpen={isTableLogConfigOpen}
+        onClose={() => setIsTableLogConfigOpen(false)}
+        onSaved={() => {
+          // If a table log dashboard is open, trigger its refresh by re-setting pipeline
+          if (selectedTableLogPipeline) {
+            setSelectedTableLogPipeline({ ...selectedTableLogPipeline });
+          }
+        }}
       />
     </div>
   );

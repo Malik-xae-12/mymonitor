@@ -4,11 +4,9 @@ import {
   Calendar, 
   Clock, 
   CheckCircle2, 
-  AlertCircle, 
   Globe, 
   RefreshCw, 
   Loader2,
-  Layers,
   Repeat
 } from 'lucide-react';
 import { formatDateTime } from './PipelineRow';
@@ -43,75 +41,75 @@ export default function PipelineScheduleModal({ workspaceId, pipeline, isOpen, o
   const hasMultiple = allSchedules.length > 1;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="relative w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150 select-none">
+      <div className="relative w-full max-w-xl bg-[#ffffff] border border-[#edebe9] rounded shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="p-2.5 rounded-xl bg-purple-500/15 text-purple-400 border border-purple-500/30 shrink-0">
-              <Calendar className="w-5 h-5" />
+        <div className="px-5 py-3.5 border-b border-[#edebe9] flex items-center justify-between bg-[#faf9f8]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-1.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4] shrink-0">
+              <Calendar className="w-4 h-4" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-slate-100 text-base truncate">
+                <h3 className="font-semibold text-[#242424] text-sm truncate">
                   Pipeline Schedules
                 </h3>
                 {allSchedules.length > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]">
                     {allSchedules.length} {allSchedules.length === 1 ? 'Schedule' : 'Schedules'}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5 truncate">
+              <p className="text-xs text-[#605e5c] font-mono mt-0.5 truncate">
                 {pipeline.pipelineName}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={fetchSchedule}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              className="p-1.5 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition"
               title="Refresh schedules from Fabric"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-purple-400' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#0f6cbd]' : ''}`} />
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              className="p-1.5 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {/* Body */}
-        <div className="p-6 overflow-y-auto space-y-4">
+        <div className="p-4 overflow-y-auto space-y-4 bg-[#faf9f8]">
           {loading ? (
-            <div className="py-16 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-2">
-              <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
-              <span>Querying Microsoft Fabric for pipeline schedules...</span>
+            <div className="py-16 text-center text-xs text-[#605e5c] flex flex-col items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-[#0f6cbd]" />
+              <span>Querying Microsoft Fabric for pipeline recurrence rules...</span>
             </div>
           ) : allSchedules.length > 0 ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Overall Status Banner */}
               <div
-                className={`p-4 rounded-xl border flex items-center justify-between ${
+                className={`p-3 rounded border flex items-center justify-between ${
                   scheduleData.enabled
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                    : 'bg-slate-800/40 border-slate-800 text-slate-400'
+                    ? 'bg-[#dff6dd] border-[#92c353] text-[#107c41]'
+                    : 'bg-[#ffffff] border-[#edebe9] text-[#605e5c]'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2">
                   {scheduleData.enabled ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 text-[#107c41] shrink-0" />
                   ) : (
-                    <Clock className="w-5 h-5 text-slate-500 shrink-0" />
+                    <Clock className="w-4 h-4 text-[#605e5c] shrink-0" />
                   )}
                   <div>
-                    <div className="text-sm font-semibold">
+                    <div className="text-xs font-semibold">
                       {scheduleData.enabled ? 'Schedules Active' : 'Schedules Disabled'}
                     </div>
-                    <div className="text-xs text-slate-400">
+                    <div className="text-[11px] opacity-85">
                       {scheduleData.enabled
                         ? `${allSchedules.filter(s => s.enabled).length} of ${allSchedules.length} automated execution triggers enabled in Fabric.`
                         : 'Configured triggers are currently paused in Fabric.'}
@@ -121,103 +119,94 @@ export default function PipelineScheduleModal({ workspaceId, pipeline, isOpen, o
               </div>
 
               {/* Multiple Schedules List */}
-              <div className="space-y-3">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                  {hasMultiple ? `All Configured Schedules (${allSchedules.length})` : 'Schedule Configuration'}
+              <div className="space-y-2">
+                <span className="text-[11px] font-semibold text-[#605e5c] uppercase tracking-wider block">
+                  {hasMultiple ? `Configured Schedules (${allSchedules.length})` : 'Schedule Configuration'}
                 </span>
 
                 {allSchedules.map((s, idx) => (
                   <div 
                     key={s.id || `sched-${idx}`}
-                    className="p-4 rounded-xl border border-slate-800 bg-slate-950/60 space-y-3 hover:border-slate-700 transition"
+                    className="p-3 rounded border border-[#edebe9] bg-[#ffffff] space-y-2.5 shadow-sm"
                   >
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
-                        <Repeat className="w-4 h-4 text-purple-400" />
-                        <span className="font-bold text-sm text-slate-100">
+                        <Repeat className="w-3.5 h-3.5 text-[#0f6cbd]" />
+                        <span className="font-semibold text-xs text-[#242424]">
                           {hasMultiple ? `Schedule #${idx + 1}` : 'Trigger Schedule'}: {s.scheduleType}
                         </span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                      <span className={`px-2 py-0.2 rounded text-[10px] font-medium ${
                         s.enabled 
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                          ? 'bg-[#dff6dd] text-[#107c41] border border-[#92c353]'
+                          : 'bg-[#f3f2f1] text-[#605e5c] border border-[#d1d1d1]'
                       }`}>
                         {s.enabled ? 'Active' : 'Disabled'}
                       </span>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                      <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80">
-                        <span className="text-[10px] uppercase text-slate-500 block font-sans">Type</span>
-                        <span className="text-slate-200 font-semibold">{s.scheduleType}</span>
+                      <div className="p-2 rounded bg-[#faf9f8] border border-[#edebe9]">
+                        <span className="text-[10px] uppercase text-[#605e5c] block font-sans">Type</span>
+                        <span className="text-[#242424] font-medium">{s.scheduleType}</span>
                       </div>
 
-                      <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80">
-                        <span className="text-[10px] uppercase text-slate-500 block font-sans">Timezone</span>
-                        <span className="text-slate-200 flex items-center gap-1">
-                          <Globe className="w-3 h-3 text-slate-400" />
+                      <div className="p-2 rounded bg-[#faf9f8] border border-[#edebe9]">
+                        <span className="text-[10px] uppercase text-[#605e5c] block font-sans">Timezone</span>
+                        <span className="text-[#242424] flex items-center gap-1 font-medium">
+                          <Globe className="w-3 h-3 text-[#605e5c]" />
                           <span>{s.timeZone || 'UTC'}</span>
                         </span>
                       </div>
 
                       {s.times && s.times.length > 0 && (
-                        <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80">
-                          <span className="text-[10px] uppercase text-slate-500 block font-sans">Execution Times</span>
-                          <span className="text-purple-300">{s.times.join(', ')}</span>
+                        <div className="p-2 rounded bg-[#faf9f8] border border-[#edebe9]">
+                          <span className="text-[10px] uppercase text-[#605e5c] block font-sans">Times</span>
+                          <span className="text-[#0f6cbd] font-semibold">{s.times.join(', ')}</span>
                         </div>
                       )}
 
                       {s.days && s.days.length > 0 && (
-                        <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80">
-                          <span className="text-[10px] uppercase text-slate-500 block font-sans">Days of Week</span>
-                          <span className="text-cyan-300">{s.days.join(', ')}</span>
+                        <div className="p-2 rounded bg-[#faf9f8] border border-[#edebe9]">
+                          <span className="text-[10px] uppercase text-[#605e5c] block font-sans">Days</span>
+                          <span className="text-[#0078d4] font-semibold">{s.days.join(', ')}</span>
                         </div>
                       )}
 
                       {s.nextRunTime && (
-                        <div className="col-span-2 p-2.5 rounded-lg bg-purple-950/20 border border-purple-500/30 text-purple-300 flex items-center justify-between">
-                          <span className="text-[11px] font-sans">Next Scheduled Run:</span>
-                          <span className="font-bold">{formatDateTime(s.nextRunTime)}</span>
-                        </div>
-                      )}
-
-                      {(s.startDate || s.endDate) && (
-                        <div className="col-span-2 text-[10px] text-slate-500 flex items-center justify-between px-1">
-                          {s.startDate && <span>Starts: {s.startDate.slice(0, 10)}</span>}
-                          {s.endDate && <span>Ends: {s.endDate.slice(0, 10)}</span>}
+                        <div className="col-span-2 p-2 rounded bg-[#eff6fc] border border-[#c7e0f4] text-[#0f6cbd] flex items-center justify-between">
+                          <span className="text-[11px] font-sans font-medium text-[#242424]">Next Scheduled Run:</span>
+                          <span className="font-semibold font-mono">{formatDateTime(s.nextRunTime)}</span>
                         </div>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
-
-              {/* Raw config summary */}
-              {scheduleData.rawConfiguration && (
-                <div className="pt-2">
-                  <span className="text-[10px] uppercase font-semibold text-slate-500 block mb-1">
-                    Fabric Recurrence Payload
-                  </span>
-                  <pre className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-400 overflow-x-auto max-h-36">
-                    {JSON.stringify(scheduleData.rawConfiguration, null, 2)}
-                  </pre>
-                </div>
-              )}
             </div>
           ) : (
-            <div className="py-12 text-center space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-center mx-auto text-slate-400">
-                <Clock className="w-6 h-6" />
+            <div className="py-12 text-center space-y-2 bg-[#ffffff] rounded border border-[#edebe9]">
+              <div className="w-10 h-10 rounded-full bg-[#f3f2f1] border border-[#d1d1d1] flex items-center justify-center mx-auto text-[#605e5c]">
+                <Clock className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-bold text-slate-200 text-sm">No Active Schedules Configured</h4>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  This pipeline runs manually on-demand or when invoked by parent pipelines. To automate runs, configure schedules in the Microsoft Fabric pipeline settings.
+                <h4 className="font-semibold text-[#242424] text-xs">No Active Schedules Configured</h4>
+                <p className="text-[11px] text-[#605e5c] max-w-sm mx-auto">
+                  This pipeline runs manually on-demand or when invoked by parent master pipelines.
                 </p>
               </div>
             </div>
           )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-[#edebe9] bg-[#faf9f8] flex items-center justify-end">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#242424] border border-[#d1d1d1] text-xs font-medium transition"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Database, 
-  Layers, 
   Check, 
   AlertCircle, 
   Save, 
@@ -18,7 +17,7 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
   const [selectedArtifactId, setSelectedArtifactId] = useState('');
   const [availableTables, setAvailableTables] = useState([]);
   
-  // Table Selections (Schema.Table) - completely dynamic, NO hardcoding!
+  // Table Selections (Schema.Table) - completely dynamic
   const [batchHeaderTable, setBatchHeaderTable] = useState('');
   const [bronzeTable, setBronzeTable] = useState('');
   const [silverTable, setSilverTable] = useState('');
@@ -28,7 +27,7 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
   const [bronzeCols, setBronzeCols] = useState([]);
   const [silverCols, setSilverCols] = useState([]);
 
-  // Column Mappings - completely dynamic, NO pre-filled hardcoded column names!
+  // Column Mappings - completely dynamic
   const [batchHeaderMapping, setBatchHeaderMapping] = useState({});
   const [bronzeMapping, setBronzeMapping] = useState({});
   const [silverMapping, setSilverMapping] = useState({});
@@ -78,20 +77,19 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
             // Fetch tables for this artifact
             if (m.server_fqdn && m.database_name) {
               await fetchTables(m.server_fqdn, m.database_name, bhFull, brFull, slFull);
+              return;
             }
-            return;
           }
         }
 
-        // If no existing mapping saved in database, leave everything empty for dynamic setup!
-        setSelectedArtifactId('');
-        setBatchHeaderTable('');
-        setBronzeTable('');
-        setSilverTable('');
-        setBatchHeaderMapping({});
-        setBronzeMapping({});
-        setSilverMapping({});
-        setAvailableTables([]);
+        // If no saved mapping, default artifact selection if available
+        if (artList.length > 0) {
+          const firstArt = artList[0];
+          setSelectedArtifactId(firstArt.id);
+          if (firstArt.serverFqdn && firstArt.databaseName) {
+            await fetchTables(firstArt.serverFqdn, firstArt.databaseName);
+          }
+        }
       } catch (err) {
         console.error("Error loading config:", err);
         setStatusMsg({ type: 'error', text: 'Failed to load workspace data sources.' });
@@ -116,7 +114,6 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
         const tbls = json.tables || [];
         setAvailableTables(tbls);
 
-        // Only pre-populate if previously saved mapping exists
         if (preBH) {
           setBatchHeaderTable(preBH);
           const [s, t] = preBH.split('.');
@@ -191,64 +188,36 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
     }
   };
 
-  const handleResetMapping = async () => {
-    if (!window.confirm("Are you sure you want to clear and reset the table log mapping for this workspace? Everything will be reset for dynamic setup.")) {
-      return;
-    }
-    try {
-      await fetch(`/api/workspaces/${workspaceId}/table-log-mapping`, { method: 'DELETE' });
-      setSelectedArtifactId('');
-      setBatchHeaderTable('');
-      setBronzeTable('');
-      setSilverTable('');
-      setBatchHeaderCols([]);
-      setBronzeCols([]);
-      setSilverCols([]);
-      setBatchHeaderMapping({});
-      setBronzeMapping({});
-      setSilverMapping({});
-      setAvailableTables([]);
-      setStatusMsg({ type: 'success', text: 'All mappings cleared. Everything is ready for fresh dynamic configuration.' });
-      if (onSaved) onSaved();
-    } catch (err) {
-      console.error("Reset error:", err);
-      setStatusMsg({ type: 'error', text: 'Failed to reset mapping.' });
-    }
-  };
-
   const handleSave = async () => {
-    const art = artifacts.find(a => a.id === selectedArtifactId);
-    if (!art) {
+    if (!selectedArtifactId) {
       setStatusMsg({ type: 'error', text: 'Please select a Warehouse or Lakehouse.' });
       return;
     }
-    if (!batchHeaderTable || !bronzeTable || !silverTable) {
-      setStatusMsg({ type: 'error', text: 'Please select all 3 tables (Batch Header, Bronze Details, Silver Details).' });
-      return;
-    }
-
-    const [bhSchema, bhTbl] = batchHeaderTable.split('.');
-    const [brSchema, brTbl] = bronzeTable.split('.');
-    const [slSchema, slTbl] = silverTable.split('.');
+    const art = artifacts.find(a => a.id === selectedArtifactId);
+    if (!art) return;
 
     setIsSaving(true);
     setStatusMsg(null);
 
+    const [bhSchema, bhTable] = (batchHeaderTable || '').split('.');
+    const [brSchema, brTable] = (bronzeTable || '').split('.');
+    const [slSchema, slTable] = (silverTable || '').split('.');
+
     const payload = {
-      artifactType: art.type,
-      artifactId: art.id,
-      artifactName: art.displayName,
-      serverFqdn: art.serverFqdn,
-      databaseName: art.databaseName,
-      batchHeaderSchema: bhSchema,
-      batchHeaderTable: bhTbl,
-      batchHeaderMapping,
-      bronzeSchema: brSchema,
-      bronzeTable: brTbl,
-      bronzeMapping,
-      silverSchema: slSchema,
-      silverTable: slTbl,
-      silverMapping
+      artifact_id: art.id,
+      artifact_name: art.displayName,
+      artifact_type: art.type,
+      server_fqdn: art.serverFqdn,
+      database_name: art.databaseName,
+      batch_header_schema: bhSchema || null,
+      batch_header_table: bhTable || null,
+      bronze_schema: brSchema || null,
+      bronze_table: brTable || null,
+      silver_schema: slSchema || null,
+      silver_table: slTable || null,
+      batch_header_mapping: batchHeaderMapping,
+      bronze_mapping: bronzeMapping,
+      silver_mapping: silverMapping
     };
 
     try {
@@ -258,14 +227,11 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        setStatusMsg({ type: 'success', text: 'Mapping successfully saved to database! Closing window...' });
+        setStatusMsg({ type: 'success', text: 'Column mapping successfully saved and applied!' });
         if (onSaved) onSaved();
-        // Automatically close modal after 1.2s
-        setTimeout(() => {
-          onClose();
-        }, 1200);
+        setTimeout(() => onClose(), 1200);
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setStatusMsg({ type: 'error', text: err.detail || 'Failed to save mapping.' });
       }
     } catch (e) {
@@ -276,118 +242,144 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
     }
   };
 
+  const handleResetMapping = async () => {
+    if (!window.confirm("Are you sure you want to clear and reset the table logging mapping?")) return;
+    setIsSaving(true);
+    setStatusMsg(null);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/table-log-mapping`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setStatusMsg({ type: 'success', text: 'Mapping reset. Default fallback schema will be used.' });
+        setBatchHeaderTable('');
+        setBronzeTable('');
+        setSilverTable('');
+        setBatchHeaderMapping({});
+        setBronzeMapping({});
+        setSilverMapping({});
+        if (onSaved) onSaved();
+      }
+    } catch (e) {
+      console.error("Reset error:", e);
+      setStatusMsg({ type: 'error', text: 'Failed to reset mapping.' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const currentArtifact = artifacts.find(a => a.id === selectedArtifactId);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-150">
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-150 select-none">
+      <div className="relative w-full max-w-4xl bg-[#ffffff] border border-[#edebe9] rounded shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/60">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
-              <Database className="w-5 h-5" />
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#edebe9] bg-[#faf9f8]">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#d1d1d1]">
+              <Database className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-100">
+              <h2 className="text-sm font-semibold text-[#242424]">
                 Lakehouse / Warehouse & Dynamic Column Mapping
               </h2>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-[#605e5c]">
                 Connect dynamically to your Fabric SQL Endpoint and map table logging schemas
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition"
+            className="p-1.5 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 bg-slate-950/30 px-6 gap-2 text-xs">
+        <div className="flex border-b border-[#edebe9] bg-[#faf9f8] px-5 gap-2 text-xs font-medium">
           <button
             onClick={() => setActiveTab('source')}
-            className={`py-3 px-4 font-semibold border-b-2 transition flex items-center gap-2 ${
+            className={`py-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
               activeTab === 'source'
-                ? 'border-cyan-400 text-cyan-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-[#0f6cbd] text-[#0f6cbd] font-semibold bg-[#ffffff]'
+                : 'border-transparent text-[#605e5c] hover:text-[#242424]'
             }`}
           >
-            <Database className="w-4 h-4" />
+            <Database className="w-3.5 h-3.5 text-[#008272]" />
             1. Source & Tables
           </button>
           <button
             onClick={() => setActiveTab('batch_header')}
-            className={`py-3 px-4 font-semibold border-b-2 transition flex items-center gap-2 ${
+            className={`py-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
               activeTab === 'batch_header'
-                ? 'border-cyan-400 text-cyan-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-[#0f6cbd] text-[#0f6cbd] font-semibold bg-[#ffffff]'
+                : 'border-transparent text-[#605e5c] hover:text-[#242424]'
             }`}
           >
-            <TableProperties className="w-4 h-4" />
+            <TableProperties className="w-3.5 h-3.5 text-[#0f6cbd]" />
             2. Batch Header Mapping
           </button>
           <button
             onClick={() => setActiveTab('bronze')}
-            className={`py-3 px-4 font-semibold border-b-2 transition flex items-center gap-2 ${
+            className={`py-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
               activeTab === 'bronze'
-                ? 'border-cyan-400 text-cyan-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-[#0f6cbd] text-[#0f6cbd] font-semibold bg-[#ffffff]'
+                : 'border-transparent text-[#605e5c] hover:text-[#242424]'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />
+            <span className="w-2 h-2 rounded-full bg-[#d83b01] inline-block" />
             3. Bronze Log Mapping
           </button>
           <button
             onClick={() => setActiveTab('silver')}
-            className={`py-3 px-4 font-semibold border-b-2 transition flex items-center gap-2 ${
+            className={`py-2.5 px-3 border-b-2 transition flex items-center gap-1.5 ${
               activeTab === 'silver'
-                ? 'border-cyan-400 text-cyan-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'border-[#0f6cbd] text-[#0f6cbd] font-semibold bg-[#ffffff]'
+                : 'border-transparent text-[#605e5c] hover:text-[#242424]'
             }`}
           >
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block" />
+            <span className="w-2 h-2 rounded-full bg-[#0078d4] inline-block" />
             4. Silver Log Mapping
           </button>
         </div>
 
         {/* Body Content */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6 text-xs text-slate-200">
+        <div className="p-5 overflow-y-auto flex-1 space-y-4 text-xs text-[#242424]">
           {/* Status feedback */}
           {statusMsg && (
-            <div className={`p-3 rounded-xl flex items-center gap-2 border ${
+            <div className={`p-3 rounded flex items-center gap-2 border ${
               statusMsg.type === 'success'
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                ? 'bg-[#dff6dd] border-[#107c41]/30 text-[#107c41]'
+                : 'bg-[#fde7e9] border-[#f4b4b9] text-[#c42b1c]'
             }`}>
-              {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" /> : <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />}
+              {statusMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
               <span className="font-medium">{statusMsg.text}</span>
             </div>
           )}
 
           {/* TAB 1: Source & Tables */}
           {activeTab === 'source' && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               {/* Step 1: Warehouse / Lakehouse */}
-              <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800 space-y-3">
+              <div className="bg-[#faf9f8] p-4 rounded border border-[#edebe9] space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-slate-200 flex items-center gap-2">
-                    <Database className="w-4 h-4 text-cyan-400" />
+                  <label className="font-semibold text-[#242424] flex items-center gap-2 text-xs">
+                    <Database className="w-4 h-4 text-[#008272]" />
                     Select Warehouse or Lakehouse
                   </label>
                   {isLoadingArtifacts && (
-                    <span className="flex items-center gap-1.5 text-[11px] text-cyan-400 animate-pulse">
+                    <span className="flex items-center gap-1.5 text-[11px] text-[#0f6cbd] animate-pulse">
                       <RefreshCw className="w-3 h-3 animate-spin" /> Querying Fabric API...
                     </span>
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {artifacts.length === 0 && !isLoadingArtifacts && (
-                    <p className="text-slate-500 italic col-span-2">
+                    <p className="text-[#605e5c] italic col-span-2 text-xs">
                       No Lakehouse or Warehouse found in this workspace. Please ensure the workspace contains Lakehouses or Warehouses and the Service Principal has access.
                     </p>
                   )}
@@ -398,25 +390,25 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                         key={art.id}
                         type="button"
                         onClick={() => handleArtifactChange(art.id)}
-                        className={`p-3 rounded-xl border text-left transition flex items-start gap-3 ${
+                        className={`p-3 rounded border text-left transition flex items-start gap-2.5 ${
                           isSel
-                            ? 'bg-cyan-500/15 border-cyan-500/50 text-white shadow-lg shadow-cyan-500/10'
-                            : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:bg-slate-800/80'
+                            ? 'bg-[#eff6fc] border-[#0f6cbd] text-[#242424] shadow-sm'
+                            : 'bg-[#ffffff] border-[#edebe9] text-[#242424] hover:bg-[#faf9f8]'
                         }`}
                       >
-                        <div className={`p-2 rounded-lg shrink-0 ${
-                          art.type === 'Lakehouse' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'
+                        <div className={`p-2 rounded shrink-0 ${
+                          art.type === 'Lakehouse' ? 'bg-[#fff4ce] text-[#794500]' : 'bg-[#eff6fc] text-[#0f6cbd]'
                         }`}>
                           <Database className="w-4 h-4" />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm truncate">{art.displayName}</span>
-                            <span className="px-2 py-0.5 text-[10px] font-semibold uppercase rounded bg-slate-800 text-slate-400">
+                            <span className="font-semibold text-xs truncate">{art.displayName}</span>
+                            <span className="px-1.5 py-0.2 text-[9px] font-medium uppercase rounded bg-[#f3f2f1] text-[#605e5c]">
                               {art.type}
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                          <p className="text-[11px] text-[#605e5c] truncate mt-0.5">
                             {art.serverFqdn || "No SQL Endpoint"}
                           </p>
                         </div>
@@ -428,28 +420,28 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
 
               {/* Step 2: Select Tables */}
               {selectedArtifactId && (
-                <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800 space-y-4">
+                <div className="bg-[#faf9f8] p-4 rounded border border-[#edebe9] space-y-3">
                   <div className="flex items-center justify-between">
-                    <label className="font-semibold text-slate-200 flex items-center gap-2">
-                      <TableProperties className="w-4 h-4 text-cyan-400" />
+                    <label className="font-semibold text-[#242424] flex items-center gap-2 text-xs">
+                      <TableProperties className="w-4 h-4 text-[#0f6cbd]" />
                       Select Log Tables from {currentArtifact?.displayName}
                     </label>
                     {isLoadingTables && (
-                      <span className="flex items-center gap-1.5 text-[11px] text-cyan-400 animate-pulse">
+                      <span className="flex items-center gap-1.5 text-[11px] text-[#0f6cbd] animate-pulse">
                         <RefreshCw className="w-3 h-3 animate-spin" /> Querying SQL Endpoint tables...
                       </span>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {/* Batch Header Table */}
-                    <div className="space-y-1.5">
-                      <span className="font-medium text-slate-300 block">1. Batch Header Table</span>
-                      <p className="text-[11px] text-slate-500">Contains PipelineRunId, BatchId, PipelineName, Status</p>
+                    <div className="space-y-1">
+                      <span className="font-medium text-[#242424] block">1. Batch Header Table</span>
+                      <p className="text-[11px] text-[#605e5c]">Contains PipelineRunId, BatchId, PipelineName, Status</p>
                       <select
                         value={batchHeaderTable}
                         onChange={(e) => handleTableChange('batch_header', e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
                       >
                         <option value="">-- Select Batch Header Table --</option>
                         {availableTables.map(t => (
@@ -459,13 +451,13 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                     </div>
 
                     {/* Bronze Table */}
-                    <div className="space-y-1.5">
-                      <span className="font-medium text-amber-400 block">2. Bronze Log Table</span>
-                      <p className="text-[11px] text-slate-500">Contains BatchId, TableName, SchemaName, Rows</p>
+                    <div className="space-y-1">
+                      <span className="font-medium text-[#d83b01] block">2. Bronze Log Table</span>
+                      <p className="text-[11px] text-[#605e5c]">Contains BatchId, TableName, SchemaName, Rows</p>
                       <select
                         value={bronzeTable}
                         onChange={(e) => handleTableChange('bronze', e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono"
+                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
                       >
                         <option value="">-- Select Bronze Table --</option>
                         {availableTables.map(t => (
@@ -475,13 +467,13 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                     </div>
 
                     {/* Silver Table */}
-                    <div className="space-y-1.5">
-                      <span className="font-medium text-cyan-400 block">3. Silver Log Table</span>
-                      <p className="text-[11px] text-slate-500">Contains BatchId, TableName, SchemaName, Duration, Counts</p>
+                    <div className="space-y-1">
+                      <span className="font-medium text-[#0078d4] block">3. Silver Log Table</span>
+                      <p className="text-[11px] text-[#605e5c]">Contains BatchId, TableName, SchemaName, Duration, Counts</p>
                       <select
                         value={silverTable}
                         onChange={(e) => handleTableChange('silver', e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-mono"
+                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
                       >
                         <option value="">-- Select Silver Table --</option>
                         {availableTables.map(t => (
@@ -495,9 +487,10 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                     <button
                       type="button"
                       onClick={() => setActiveTab('batch_header')}
-                      className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition flex items-center gap-2 text-xs"
+                      className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white font-medium transition flex items-center gap-1.5 text-xs shadow-sm"
                     >
-                      Next: Map Columns <ChevronRight className="w-4 h-4" />
+                      <span>Next: Map Columns</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -507,16 +500,16 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
 
           {/* TAB 2: Batch Header Mapping */}
           {activeTab === 'batch_header' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#edebe9]">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-100">Batch Header Table Column Mapping</h3>
-                  <p className="text-slate-400 text-xs">Selected Table: <span className="font-mono text-cyan-400">{batchHeaderTable || "None selected"}</span></p>
+                  <h3 className="text-xs font-bold text-[#242424]">Batch Header Table Column Mapping</h3>
+                  <p className="text-[#605e5c] text-[11px]">Selected Table: <span className="font-mono text-[#0f6cbd]">{batchHeaderTable || "None selected"}</span></p>
                 </div>
               </div>
 
               {!batchHeaderTable ? (
-                <div className="p-8 text-center text-slate-500 italic bg-slate-950/30 rounded-xl border border-slate-800">
+                <div className="p-8 text-center text-[#605e5c] italic bg-[#faf9f8] rounded border border-[#edebe9]">
                   Please select a Batch Header table in Tab 1 (Source & Tables) first.
                 </div>
               ) : (
@@ -577,16 +570,17 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                 <button
                   type="button"
                   onClick={() => setActiveTab('source')}
-                  className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#323130] text-xs font-medium"
                 >
                   Back
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab('bronze')}
-                  className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white font-medium flex items-center gap-1 text-xs shadow-sm"
                 >
-                  Next: Bronze Mapping <ChevronRight className="w-4 h-4" />
+                  <span>Next: Bronze Mapping</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -594,23 +588,23 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
 
           {/* TAB 3: Bronze Mapping */}
           {activeTab === 'bronze' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#edebe9]">
                 <div>
-                  <h3 className="text-sm font-bold text-amber-400">Bronze Details Column Mapping</h3>
-                  <p className="text-slate-400 text-xs">Selected Table: <span className="font-mono text-amber-400">{bronzeTable || "None selected"}</span></p>
+                  <h3 className="text-xs font-bold text-[#d83b01]">Bronze Details Column Mapping</h3>
+                  <p className="text-[#605e5c] text-[11px]">Selected Table: <span className="font-mono text-[#d83b01]">{bronzeTable || "None selected"}</span></p>
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="p-2.5 rounded bg-[#fff4ce] border border-[#ffe082] text-[#794500] text-xs flex items-start gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-[#794500] shrink-0 mt-0.5" />
                 <span>
-                  Tip: In tables with both "Data Load" and "Source Delete" records (such as <code className="text-amber-300">SourceName</code>), the dashboard automatically filters and calculates counts from the <strong>Data Load</strong> operations to avoid duplicate table counts.
+                  Tip: In tables with both "Data Load" and "Source Delete" records (such as <code className="font-bold">SourceName</code>), the dashboard automatically filters and calculates counts from the <strong>Data Load</strong> operations to avoid duplicate table counts.
                 </span>
               </div>
 
               {!bronzeTable ? (
-                <div className="p-8 text-center text-slate-500 italic bg-slate-950/30 rounded-xl border border-slate-800">
+                <div className="p-8 text-center text-[#605e5c] italic bg-[#faf9f8] rounded border border-[#edebe9]">
                   Please select a Bronze table in Tab 1 (Source & Tables) first.
                 </div>
               ) : (
@@ -685,16 +679,17 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                 <button
                   type="button"
                   onClick={() => setActiveTab('batch_header')}
-                  className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#323130] text-xs font-medium"
                 >
                   Back
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab('silver')}
-                  className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white font-medium flex items-center gap-1 text-xs shadow-sm"
                 >
-                  Next: Silver Mapping <ChevronRight className="w-4 h-4" />
+                  <span>Next: Silver Mapping</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
@@ -702,23 +697,23 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
 
           {/* TAB 4: Silver Mapping */}
           {activeTab === 'silver' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-[#edebe9]">
                 <div>
-                  <h3 className="text-sm font-bold text-cyan-400">Silver Log Details Column Mapping</h3>
-                  <p className="text-slate-400 text-xs">Selected Table: <span className="font-mono text-cyan-400">{silverTable || "None selected"}</span></p>
+                  <h3 className="text-xs font-bold text-[#0078d4]">Silver Log Details Column Mapping</h3>
+                  <p className="text-[#605e5c] text-[11px]">Selected Table: <span className="font-mono text-[#0078d4]">{silverTable || "None selected"}</span></p>
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 text-cyan-200 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+              <div className="p-2.5 rounded bg-[#eff6fc] border border-[#c7e0f4] text-[#004e8c] text-xs flex items-start gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-[#0f6cbd] shrink-0 mt-0.5" />
                 <span>
-                  Tip: If your database table has column values swapped (e.g. column <code className="text-cyan-300">SchemaName</code> contains table names and <code className="text-cyan-300">TableName</code> contains schemas), simply map <strong>Table Name</strong> and <strong>Schema Name</strong> to their respective database columns. The system also automatically detects and resolves swapped names.
+                  Tip: If your database table has column values swapped, simply map <strong>Table Name</strong> and <strong>Schema Name</strong> to their respective database columns. The system also automatically detects and resolves swapped names.
                 </span>
               </div>
 
               {!silverTable ? (
-                <div className="p-8 text-center text-slate-500 italic bg-slate-950/30 rounded-xl border border-slate-800">
+                <div className="p-8 text-center text-[#605e5c] italic bg-[#faf9f8] rounded border border-[#edebe9]">
                   Please select a Silver table in Tab 1 (Source & Tables) first.
                 </div>
               ) : (
@@ -752,29 +747,36 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                     onChange={(val) => setSilverMapping(prev => ({ ...prev, rows_processed_col: val }))}
                   />
                   <MappingRow
-                    label="Duration in Seconds"
-                    description="Execution duration in seconds (e.g. DurationInSec). Used to calculate Avg. Load Duration KPI."
-                    currentVal={silverMapping.duration_col}
-                    columns={silverCols}
-                    onChange={(val) => setSilverMapping(prev => ({ ...prev, duration_col: val }))}
-                  />
-                  <MappingRow
                     label="Status"
-                    description="Table transformation status (e.g. Success, Failure). Used to calculate Successfully Loaded and Failed Tables KPIs."
+                    description="Table execution status (e.g. Success, Failure). Used to calculate Successfully Loaded and Failed Tables KPIs."
                     currentVal={silverMapping.status_col}
                     columns={silverCols}
                     onChange={(val) => setSilverMapping(prev => ({ ...prev, status_col: val }))}
                   />
                   <MappingRow
                     label="Start Time"
-                    description="Table transformation start timestamp. Displayed in table log details."
+                    description="Table load start timestamp."
                     currentVal={silverMapping.start_time_col}
                     columns={silverCols}
                     onChange={(val) => setSilverMapping(prev => ({ ...prev, start_time_col: val }))}
                   />
                   <MappingRow
+                    label="End Time"
+                    description="Table load end timestamp. Used to calculate duration and Avg. Load Duration KPI."
+                    currentVal={silverMapping.end_time_col}
+                    columns={silverCols}
+                    onChange={(val) => setSilverMapping(prev => ({ ...prev, end_time_col: val }))}
+                  />
+                  <MappingRow
+                    label="Duration"
+                    description="Pre-calculated duration in minutes or seconds (e.g. DurationInSeconds)."
+                    currentVal={silverMapping.duration_col}
+                    columns={silverCols}
+                    onChange={(val) => setSilverMapping(prev => ({ ...prev, duration_col: val }))}
+                  />
+                  <MappingRow
                     label="Error Message"
-                    description="Detailed error message if table transformation failed."
+                    description="Error description if silver table load failed."
                     currentVal={silverMapping.error_message_col}
                     columns={silverCols}
                     onChange={(val) => setSilverMapping(prev => ({ ...prev, error_message_col: val }))}
@@ -786,18 +788,9 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
                 <button
                   type="button"
                   onClick={() => setActiveTab('bronze')}
-                  className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
+                  className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#323130] text-xs font-medium"
                 >
                   Back
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/20"
-                >
-                  <Save className="w-4 h-4" />
-                  {isSaving ? "Saving Configuration..." : "Save Mapping to Database"}
                 </button>
               </div>
             </div>
@@ -805,9 +798,9 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+        <div className="flex items-center justify-between px-5 py-3 border-t border-[#edebe9] bg-[#faf9f8] text-xs">
+          <div className="flex items-center gap-2 text-[#605e5c] text-[11px]">
+            <span className="w-2 h-2 rounded-full bg-[#107c41]"></span>
             <span>All selections are 100% dynamic without hardcoded defaults.</span>
           </div>
           <div className="flex items-center gap-2">
@@ -815,19 +808,19 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
               type="button"
               onClick={handleResetMapping}
               title="Clear all saved mappings and reset"
-              className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-rose-300 transition text-xs flex items-center gap-1.5"
+              className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#fde7e9] border border-[#d1d1d1] text-[#c42b1c] transition text-xs flex items-center gap-1.5 font-medium"
             >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <Trash2 className="w-3.5 h-3.5 text-[#c42b1c]" />
               <span>Reset Mapping</span>
             </button>
             <button
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1.5 transition shadow-lg shadow-emerald-600/20"
+              className="px-4 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white font-medium flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
             >
               <Save className="w-3.5 h-3.5" />
-              {isSaving ? "Saving..." : "Save Mapping"}
+              <span>{isSaving ? "Saving..." : "Save Mapping"}</span>
             </button>
           </div>
         </div>
@@ -838,29 +831,29 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
 
 function MappingRow({ label, description, currentVal, columns, onChange }) {
   return (
-    <div className="p-2.5 rounded-lg bg-slate-950/50 border border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-700 transition">
+    <div className="p-2.5 rounded bg-[#ffffff] border border-[#edebe9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#d1d1d1] transition shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
       <div className="sm:w-1/2">
-        <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+        <div className="font-medium text-[#242424] flex items-center gap-1.5 text-xs">
           <span>{label}</span>
         </div>
-        <p className="text-[11px] text-slate-400 mt-0.5">{description}</p>
+        <p className="text-[11px] text-[#605e5c] mt-0.5">{description}</p>
       </div>
 
       <div className="sm:w-1/2 flex items-center gap-2">
         <select
           value={currentVal || ''}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500 cursor-pointer"
+          className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] font-mono focus:outline-none focus:border-[#0f6cbd] cursor-pointer"
         >
           <option value="">-- Select Column --</option>
           {columns.map(c => (
-            <option key={c.name} value={c.name}>
+            <option key={c.name} value={c.name} className="bg-[#ffffff] text-[#242424]">
               {c.name} ({c.dataType})
             </option>
           ))}
         </select>
         {currentVal && (
-          <span className="px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-500/40 text-[10px] text-cyan-400 font-mono shrink-0">
+          <span className="px-2 py-0.5 rounded bg-[#dff6dd] border border-[#107c41]/30 text-[10px] text-[#107c41] font-mono shrink-0">
             Mapped
           </span>
         )}

@@ -1,26 +1,45 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    --fabric-bg-canvas: #faf9f8;
+    --fabric-bg-subtle: #f3f2f1;
+    --fabric-bg-card: #ffffff;
+    --fabric-bg-hover: #ebebeb;
+    --fabric-border: #edebe9;
+    --fabric-border-subtle: #e1dfdd;
+    --fabric-brand: #0f6cbd;
+    --fabric-brand-hover: #115ea3;
+    --fabric-text-primary: #242424;
+    --fabric-text-secondary: #605e5c;
+    --fabric-text-subtle: #a19f9d;
+  }
+
   body {
-    @apply bg-slate-950 text-slate-100 antialiased font-sans min-h-screen selection:bg-blue-600 selection:text-white;
+    font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+    background-color: #faf9f8;
+    color: #242424;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
   }
 }
 
-/* Custom sleek scrollbars */
+/* Microsoft Fluent Sleek Scrollbars (Light Theme) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: #f3f2f1;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
+  background: #c8c6c4;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #a19f9d;
 }

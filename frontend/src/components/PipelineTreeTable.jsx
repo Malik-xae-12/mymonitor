@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Layers } from 'lucide-react';
+import { Loader2, Info } from 'lucide-react';
 import PipelineRow from './PipelineRow';
-import DateFilterBar from './DateFilterBar';
+import FabricCommandBar from './FabricCommandBar';
+import FabricMetricCards from './FabricMetricCards';
 
 export default function PipelineTreeTable({ 
   workspaceId, 
@@ -12,11 +13,15 @@ export default function PipelineTreeTable({
   onDateFilterChange,
   onSelectError, 
   isLoading,
+  onRefresh,
+  lastUpdated,
   onOpenRunHistory,
   onOpenSchedule,
   onOpenSlaConfig,
   onResolveIncident,
-  onOpenTableLogs
+  onOpenTableLogs,
+  onOpenTableLogConfig,
+  onOpenSidePane
 }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -42,55 +47,74 @@ export default function PipelineTreeTable({
   });
 
   return (
-    <div className="space-y-4">
-      {/* Dynamic Date-Based Telemetry & Execution Filter Bar */}
-      <DateFilterBar
+    <div className="space-y-3 select-none">
+      {/* Fluent Command Bar */}
+      <FabricCommandBar
         search={search}
         onSearchChange={setSearch}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
-        metrics={metrics}
         dateFilter={dateFilter}
         dateFilterInfo={dateFilterInfo}
         onDateFilterChange={(newFilter) => {
-          setStatusFilter('ALL'); // Reset status tab on date change for clarity
+          setStatusFilter('ALL');
           if (onDateFilterChange) onDateFilterChange(newFilter);
         }}
-        workspaceId={workspaceId}
+        onRefresh={onRefresh}
+        isLoading={isLoading}
+        lastUpdated={lastUpdated}
+        onOpenTableLogConfig={onOpenTableLogConfig}
       />
 
-      {/* Unified Tree-Grid Data Table */}
-      <div>
+      {/* Fluent 2 KPI Metric Summary Cards */}
+      <FabricMetricCards
+        metrics={metrics}
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        isFuture={!!dateFilterInfo?.isFuture}
+      />
+
+      {/* Data Table Grid (Microsoft Fluent DetailsList Pattern - White Theme) */}
+      <div className="rounded border border-[#edebe9] bg-[#ffffff] overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
         {!workspaceId ? (
-          <div className="py-20 text-center text-xs text-slate-400 space-y-2 bg-slate-900/30 rounded-xl border border-slate-800">
-            <div className="text-sm font-medium text-slate-200">No workspace selected</div>
-            <p className="text-slate-500">Please select a workspace from the top bar to view its live pipeline execution hierarchy.</p>
+          <div className="py-16 text-center text-xs text-[#605e5c] space-y-2 bg-[#ffffff]">
+            <div className="w-10 h-10 rounded-full bg-[#eff6fc] border border-[#d1d1d1] flex items-center justify-center mx-auto text-[#0f6cbd]">
+              <Info className="w-5 h-5" />
+            </div>
+            <div className="text-sm font-semibold text-[#242424]">No workspace selected</div>
+            <p className="text-[#605e5c] max-w-sm mx-auto text-xs">
+              Select a workspace from the Microsoft Fabric top suite bar to load and monitor pipeline activities.
+            </p>
           </div>
         ) : isLoading && pipelines.length === 0 ? (
-          <div className="py-20 text-center text-xs text-slate-400 animate-pulse space-y-2 bg-slate-900/30 rounded-xl border border-slate-800">
-            <div className="inline-block p-3 rounded-full bg-slate-900 border border-slate-800">
-              <Layers className="w-6 h-6 text-blue-400 animate-spin" />
+          <div className="py-16 text-center text-xs text-[#605e5c] space-y-2 bg-[#ffffff]">
+            <div className="w-10 h-10 rounded-full bg-[#eff6fc] border border-[#d1d1d1] flex items-center justify-center mx-auto text-[#0f6cbd]">
+              <Loader2 className="w-5 h-5 animate-spin" />
             </div>
-            <div>Loading workspace pipeline telemetry...</div>
+            <div className="text-[#242424] font-medium">Loading Fabric pipeline execution hierarchy...</div>
           </div>
         ) : filteredPipelines.length === 0 ? (
-          <div className="py-16 text-center text-xs text-slate-500 bg-slate-900/30 rounded-xl border border-slate-800/80">
-            No pipelines match the selected filters.
+          <div className="py-16 text-center text-xs text-[#605e5c] bg-[#ffffff] space-y-1.5">
+            <div className="text-[#242424] font-semibold text-sm">No items match the current filter criteria</div>
+            <p className="text-[#797775] text-xs">
+              Try resetting the date range or status filter in the command bar above.
+            </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40 shadow-2xl backdrop-blur-sm">
+          <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[950px]">
               <thead>
-                <tr className="bg-slate-950/80 text-slate-400 text-[11px] font-semibold uppercase tracking-wider border-b border-slate-800">
-                  <th className="py-3 px-4 w-[32%]">Name</th>
-                  <th className="py-3 px-3 w-[16%]">Status & SLA</th>
-                  <th className="py-3 px-3 w-[14%]">Start Time</th>
-                  <th className="py-3 px-3 w-[14%]">End Time</th>
-                  <th className="py-3 px-3 w-[8%]">Duration</th>
-                  <th className="py-3 px-4 w-[16%] text-right">Actions</th>
+                <tr className="bg-[#faf9f8] text-[#605e5c] text-[11px] font-semibold uppercase tracking-wider border-b border-[#edebe9]">
+                  <th className="py-2.5 px-3 w-[34%] font-semibold">Activity name</th>
+                  <th className="py-2.5 px-3 w-[12%] font-semibold">Item type</th>
+                  <th className="py-2.5 px-3 w-[16%] font-semibold">Status & SLA</th>
+                  <th className="py-2.5 px-3 w-[14%] font-semibold">Start time</th>
+                  <th className="py-2.5 px-3 w-[14%] font-semibold">End time</th>
+                  <th className="py-2.5 px-3 w-[6%] font-semibold">Duration</th>
+                  <th className="py-2.5 px-3 w-[4%] text-right font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/50">
+              <tbody className="divide-y divide-[#edebe9]">
                 {filteredPipelines.map((pipe) => (
                   <PipelineRow
                     key={pipe.id}
@@ -102,6 +126,7 @@ export default function PipelineTreeTable({
                     onOpenSlaConfig={onOpenSlaConfig}
                     onResolveIncident={onResolveIncident}
                     onOpenTableLogs={onOpenTableLogs}
+                    onOpenSidePane={onOpenSidePane}
                   />
                 ))}
               </tbody>

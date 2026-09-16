@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChevronRight, 
   ChevronDown, 
-  PlayCircle, 
   GitFork, 
   Clock, 
   Layers, 
@@ -25,42 +24,43 @@ import {
   Calendar,
   Bell,
   Ban,
-  ShieldAlert
+  MoreHorizontal,
+  PanelRightOpen
 } from 'lucide-react';
 
 export function getActivityIcon(type) {
   switch (type?.toLowerCase()) {
     case 'executepipeline':
     case 'invokepipeline':
-      return <Layers className="w-3.5 h-3.5 text-purple-400" />;
+      return <Layers className="w-3.5 h-3.5 text-[#773adc]" />;
     case 'lookup':
-      return <Search className="w-3.5 h-3.5 text-cyan-400" />;
+      return <Search className="w-3.5 h-3.5 text-[#008272]" />;
     case 'filter':
-      return <Filter className="w-3.5 h-3.5 text-indigo-400" />;
+      return <Filter className="w-3.5 h-3.5 text-[#0f6cbd]" />;
     case 'foreach':
-      return <Repeat className="w-3.5 h-3.5 text-emerald-400" />;
+      return <Repeat className="w-3.5 h-3.5 text-[#107c41]" />;
     case 'switch':
-      return <GitBranch className="w-3.5 h-3.5 text-amber-400" />;
+      return <GitBranch className="w-3.5 h-3.5 text-[#d83b01]" />;
     case 'setvariable':
-      return <Variable className="w-3.5 h-3.5 text-sky-400" />;
+      return <Variable className="w-3.5 h-3.5 text-[#0078d4]" />;
     case 'appendvariable':
-      return <ListPlus className="w-3.5 h-3.5 text-teal-400" />;
+      return <ListPlus className="w-3.5 h-3.5 text-[#00b7c3]" />;
     case 'fail':
-      return <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />;
+      return <AlertOctagon className="w-3.5 h-3.5 text-[#c42b1c]" />;
     case 'notebook':
     case 'synapsenotebook':
-      return <Code2 className="w-3.5 h-3.5 text-amber-400" />;
+      return <Code2 className="w-3.5 h-3.5 text-[#d83b01]" />;
     case 'copy':
-      return <Database className="w-3.5 h-3.5 text-blue-400" />;
+      return <Database className="w-3.5 h-3.5 text-[#0f6cbd]" />;
     case 'sql':
     case 'script':
     case 'storedprocedure':
-      return <Cpu className="w-3.5 h-3.5 text-blue-400" />;
+      return <Cpu className="w-3.5 h-3.5 text-[#0f6cbd]" />;
     case 'web':
     case 'webhook':
-      return <ArrowRightCircle className="w-3.5 h-3.5 text-purple-400" />;
+      return <ArrowRightCircle className="w-3.5 h-3.5 text-[#773adc]" />;
     default:
-      return <ArrowRightCircle className="w-3.5 h-3.5 text-slate-400" />;
+      return <ArrowRightCircle className="w-3.5 h-3.5 text-[#605e5c]" />;
   }
 }
 
@@ -69,8 +69,15 @@ export function formatDateTime(isoString) {
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return "—";
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
   } catch {
     return "—";
   }
@@ -120,73 +127,84 @@ export function computeDuration(item) {
   return 0;
 }
 
-export function StatusBadge({ status }) {
+export function StatusBadge({ status, onSelectError, errorData }) {
   const s = status?.toLowerCase() || '';
+
   if (s === 'inprogress' || s === 'running') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30 animate-pulse">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        Running
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/30">
+        <Loader2 className="w-3 h-3 animate-spin text-[#0f6cbd]" />
+        <span>In Progress</span>
       </span>
     );
   }
+
   if (s === 'completed' || s === 'succeeded' || s === 'success') {
     return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-        <CheckCircle2 className="w-3 h-3" />
-        Success
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#dff6dd] text-[#107c41] border border-[#107c41]/30">
+        <CheckCircle2 className="w-3 h-3 text-[#107c41]" />
+        <span>Completed</span>
       </span>
     );
   }
+
   if (s === 'failed' || s === 'failure') {
+    if (onSelectError && errorData) {
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectError(errorData);
+          }}
+          title="Click to view error diagnostics & AI fix"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#fde7e9] hover:bg-[#fcd0d3] text-[#c42b1c] border border-[#c42b1c]/40 transition group cursor-pointer"
+        >
+          <XCircle className="w-3 h-3 text-[#c42b1c] group-hover:scale-110 transition-transform" />
+          <span>Failed</span>
+          <span className="text-[10px] underline underline-offset-2 opacity-80 group-hover:opacity-100 font-semibold">
+            View error
+          </span>
+        </button>
+      );
+    }
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-        <XCircle className="w-3.5 h-3.5" />
-        Failed
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#fde7e9] text-[#c42b1c] border border-[#c42b1c]/30">
+        <XCircle className="w-3 h-3 text-[#c42b1c]" />
+        <span>Failed</span>
       </span>
     );
   }
+
   if (s === 'cancelled' || s === 'canceled') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-        <Ban className="w-3 h-3" />
-        Cancelled
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#f3f2f1] text-[#605e5c] border border-[#d1d1d1]">
+        <Ban className="w-3 h-3 text-[#797775]" />
+        <span>Cancelled</span>
       </span>
     );
   }
+
   if (s === 'scheduled' || s === 'upcoming') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30">
-        <Calendar className="w-3 h-3 text-purple-400" />
-        Scheduled
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#f3e8ff] text-[#773adc] border border-[#773adc]/30">
+        <Calendar className="w-3 h-3 text-[#773adc]" />
+        <span>Scheduled</span>
       </span>
     );
   }
-  if (s === 'not scheduled') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-900 border border-slate-800 text-slate-500">
-        <Clock className="w-3 h-3 text-slate-600" />
-        Not Scheduled
-      </span>
-    );
-  }
+
   if (s === 'not run' || s === 'not_run' || s === 'no runs' || s === 'noruns') {
     return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-900 border border-slate-800 text-slate-400">
-        <Clock className="w-3 h-3 text-slate-500" />
-        Not Run
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-[#f3f2f1] text-[#797775] border border-[#e1dfdd]">
+        <Clock className="w-3 h-3 text-[#797775]" />
+        <span>Not run</span>
       </span>
     );
   }
-  if (s === 'notstarted' || s === 'not started' || s === 'queued') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
-        Not Started
-      </span>
-    );
-  }
+
   return (
-    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#f3f2f1] text-[#797775] border border-[#e1dfdd]">
       {status || "—"}
     </span>
   );
@@ -204,9 +222,9 @@ export function SlaCountdownBadge({ incident, onResolve }) {
 
   if (incident.status === 'RESOLVED') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-        <CheckCircle2 className="w-3 h-3" />
-        SLA Resolved
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#dff6dd] text-[#107c41] border border-[#107c41]/30">
+        <CheckCircle2 className="w-2.5 h-2.5" />
+        <span>SLA Resolved</span>
       </span>
     );
   }
@@ -221,26 +239,19 @@ export function SlaCountdownBadge({ incident, onResolve }) {
     const days = Math.floor(totalSec / 86400);
     const hours = Math.floor((totalSec % 86400) / 3600);
     const minutes = Math.floor((totalSec % 3600) / 60);
-    const seconds = totalSec % 60;
 
     let overdueText = '';
-    if (days > 0) {
-      overdueText = `+${days}d ${hours}h ${minutes}m`;
-    } else if (hours > 0) {
-      overdueText = `+${hours}h ${minutes}m ${seconds}s`;
-    } else {
-      overdueText = `+${minutes}m ${seconds}s`;
-    }
-
-    const totalOverdueMinutes = Math.floor(overdueMs / 60000);
+    if (days > 0) overdueText = `+${days}d ${hours}h`;
+    else if (hours > 0) overdueText = `+${hours}h ${minutes}m`;
+    else overdueText = `+${minutes}m`;
 
     return (
       <div className="inline-flex items-center gap-1.5 flex-wrap">
         <span 
-          title={`SLA breach overdue by ${totalOverdueMinutes.toLocaleString()} minutes (${overdueText}). Incident is awaiting operator resolution.`}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20 animate-pulse cursor-help"
+          title="SLA Breached and escalated to L2 operations"
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#fde7e9] text-[#c42b1c] border border-[#f4b4b9] shadow-sm"
         >
-          <AlertOctagon className="w-3 h-3 text-rose-400 shrink-0" />
+          <AlertOctagon className="w-2.5 h-2.5 text-[#c42b1c]" />
           <span>SLA Breached ({overdueText})</span>
         </span>
         {onResolve && (
@@ -250,7 +261,7 @@ export function SlaCountdownBadge({ incident, onResolve }) {
               onResolve(incident.id);
             }}
             title="Acknowledge and mark incident resolved"
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm"
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#107c41] hover:bg-[#0f703b] text-white transition shadow-sm"
           >
             Resolve
           </button>
@@ -259,15 +270,14 @@ export function SlaCountdownBadge({ incident, onResolve }) {
     );
   }
 
-  // Active countdown
   const remMin = Math.floor(diffMs / 60000);
   const remSec = Math.floor((diffMs % 60000) / 1000);
 
   return (
     <div className="inline-flex items-center gap-1.5 flex-wrap">
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-        <Clock className="w-3 h-3 text-amber-400 shrink-0 animate-spin" />
-        <span>SLA: {remMin}m {remSec}s left</span>
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#fff8e1] text-[#b78103] border border-[#ffe082]">
+        <Clock className="w-2.5 h-2.5 text-[#b78103]" />
+        <span>SLA: {remMin}m {remSec}s</span>
       </span>
       {onResolve && (
         <button
@@ -275,8 +285,7 @@ export function SlaCountdownBadge({ incident, onResolve }) {
             e.stopPropagation();
             onResolve(incident.id);
           }}
-          title="Acknowledge and mark incident resolved"
-          className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm"
+          className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#107c41] hover:bg-[#0f703b] text-white transition shadow-sm"
         >
           Resolve
         </button>
@@ -285,74 +294,102 @@ export function SlaCountdownBadge({ incident, onResolve }) {
   );
 }
 
-function ActivityRow({ activity, depth, onSelectError }) {
+function ActivityRow({ activity, depth, onSelectError, onOpenSidePane }) {
   const isFailed = activity.status?.toLowerCase() === 'failed';
 
+  const errorData = isFailed ? {
+    activityName: activity.activityName,
+    activityType: activity.activityType,
+    status: activity.status,
+    activityRunStart: activity.activityRunStart,
+    activityRunEnd: activity.activityRunEnd,
+    durationInMs: activity.durationInMs,
+    error: activity.error,
+    output: activity.output
+  } : null;
+
   return (
-    <tr className="border-b border-slate-800/40 bg-slate-950/30 hover:bg-slate-900/40 transition-colors">
-      <td className="py-2.5 px-4" style={{ paddingLeft: `${depth * 28 + 16}px` }}>
-        <div className="flex items-center gap-2.5">
-          <span className="w-6 h-6 inline-block" />
-          <div className="p-1 rounded bg-slate-800 text-slate-400 border border-slate-700 shrink-0">
+    <tr 
+      onClick={() => onOpenSidePane && onOpenSidePane(activity)}
+      className="border-b border-[#edebe9] bg-[#fafafa] hover:bg-[#f3f2f1] transition-colors group cursor-pointer text-xs"
+    >
+      {/* Activity Name */}
+      <td className="py-2 px-3" style={{ paddingLeft: `${depth * 24 + 16}px` }}>
+        <div className="flex items-center gap-2">
+          <span className="w-4 h-4 inline-block" />
+          <div className="p-1 rounded bg-[#ffffff] border border-[#edebe9] shrink-0">
             {getActivityIcon(activity.activityType)}
           </div>
-          <div className="flex items-center gap-2 flex-wrap min-w-0">
-            <span className="font-mono text-xs text-slate-200 truncate">
+          <div className="flex items-center gap-2 min-w-0 truncate">
+            <span className="font-medium text-[#242424] truncate">
               {activity.activityName}
-            </span>
-            <span className="text-[10px] text-slate-500 font-mono">
-              ({activity.activityType})
             </span>
           </div>
         </div>
       </td>
 
-      <td className="py-2.5 px-3 whitespace-nowrap">
-        <StatusBadge status={activity.status} />
+      {/* Item Type */}
+      <td className="py-2 px-3 text-[#605e5c] font-mono text-[11px] whitespace-nowrap">
+        {activity.activityType || 'Activity'}
       </td>
 
-      <td className="py-2.5 px-3 font-mono text-xs text-slate-400 whitespace-nowrap">
+      {/* Status */}
+      <td className="py-2 px-3 whitespace-nowrap">
+        <StatusBadge 
+          status={activity.status} 
+          onSelectError={onSelectError}
+          errorData={errorData}
+        />
+      </td>
+
+      {/* Start Time */}
+      <td className="py-2 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
         {formatDateTime(activity.activityRunStart)}
       </td>
 
-      <td className="py-2.5 px-3 font-mono text-xs text-slate-400 whitespace-nowrap">
+      {/* End Time */}
+      <td className="py-2 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
         {formatDateTime(activity.activityRunEnd)}
       </td>
 
-      <td className="py-2.5 px-3 font-mono text-xs text-slate-300 font-medium whitespace-nowrap">
+      {/* Duration */}
+      <td className="py-2 px-3 font-mono text-[#323130] text-xs whitespace-nowrap">
         {formatDuration(computeDuration(activity))}
       </td>
 
-      <td className="py-2.5 px-4 text-right whitespace-nowrap">
+      {/* Actions */}
+      <td className="py-2 px-3 text-right whitespace-nowrap">
         {isFailed ? (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onSelectError({
-                activityName: activity.activityName,
-                activityType: activity.activityType,
-                status: activity.status,
-                activityRunStart: activity.activityRunStart,
-                activityRunEnd: activity.activityRunEnd,
-                durationInMs: activity.durationInMs,
-                error: activity.error,
-                output: activity.output
-              });
+              onSelectError(errorData);
             }}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition shadow-sm"
+            title="Inspect error diagnostics"
+            className="p-1 rounded text-[#797775] hover:text-[#c42b1c] hover:bg-[#fde7e9] transition"
           >
-            <AlertCircle className="w-3.5 h-3.5" />
-            <span>Error</span>
+            <AlertCircle className="w-3.5 h-3.5 text-[#c42b1c]" />
           </button>
         ) : (
-          <span className="text-slate-600 font-mono text-xs">—</span>
+          <span className="text-[#a19f9d] font-mono text-xs">—</span>
         )}
       </td>
     </tr>
   );
 }
 
-function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHistory, onOpenSchedule, onOpenSlaConfig, onResolveIncident, onOpenTableLogs }) {
+function SubPipelineActivityRow({ 
+  activity, 
+  depth, 
+  onSelectError, 
+  onOpenRunHistory, 
+  onOpenSchedule, 
+  onOpenSlaConfig, 
+  onResolveIncident, 
+  onOpenTableLogs,
+  onOpenSidePane
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
   const child = activity.childPipeline;
   const hasInnerActivities = child?.activities && child.activities.length > 0;
@@ -363,17 +400,30 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
   const endTime = activity.activityRunEnd || child?.endTime;
   const duration = computeDuration(activity) || (child ? computeDuration(child) : 0);
   const status = activity.status || child?.status || "Unknown";
+  const isFailed = status?.toLowerCase() === 'failed';
+
+  const err = activity.error || child?.error;
+  const errorData = isFailed ? {
+    activityName: activity.activityName,
+    activityType: activity.activityType || "Sub-pipeline",
+    status: status,
+    activityRunStart: startTime,
+    activityRunEnd: endTime,
+    durationInMs: duration,
+    error: err,
+    output: err?.rawError || activity.output
+  } : null;
 
   return (
     <>
       <tr 
         onClick={() => canExpand && setIsExpanded(!isExpanded)}
-        className={`group border-b border-slate-800/60 bg-purple-950/15 hover:bg-purple-950/30 transition-colors ${
+        className={`border-b border-[#edebe9] bg-[#faf8ff] hover:bg-[#f3edfc] transition-colors text-xs ${
           canExpand ? "cursor-pointer" : ""
         }`}
       >
-        <td className="py-2.5 px-4" style={{ paddingLeft: `${depth * 28 + 16}px` }}>
-          <div className="flex items-center gap-2.5">
+        <td className="py-2.5 px-3" style={{ paddingLeft: `${depth * 24 + 16}px` }}>
+          <div className="flex items-center gap-2">
             {canExpand ? (
               <button
                 type="button"
@@ -381,83 +431,77 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
                   e.stopPropagation();
                   setIsExpanded(!isExpanded);
                 }}
-                className="p-1 rounded text-purple-300 group-hover:text-white hover:bg-purple-900/40 transition"
+                className="p-0.5 rounded text-[#605e5c] hover:text-[#242424] transition"
               >
                 {isExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-purple-400" />
+                  <ChevronDown className="w-3.5 h-3.5 text-[#773adc]" />
                 ) : (
-                  <ChevronRight className="w-4 h-4 text-purple-400" />
+                  <ChevronRight className="w-3.5 h-3.5 text-[#605e5c]" />
                 )}
               </button>
             ) : (
-              <span className="w-6 h-6 inline-block" />
+              <span className="w-4 h-4 inline-block" />
             )}
 
-            <div className="p-1 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+            <div className="p-1 rounded bg-[#f3e8ff] text-[#773adc] border border-[#773adc]/30 shrink-0">
               <Layers className="w-3.5 h-3.5" />
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <span className="font-semibold text-slate-200 text-xs truncate">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="font-semibold text-[#242424] text-xs truncate">
                 {activity.activityName}
               </span>
-              <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+              <span className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-[#f3e8ff] text-[#773adc] border border-[#773adc]/30">
                 Sub-pipeline
               </span>
-              {child?.pipelineName && child.pipelineName !== activity.activityName && (
-                <span className="text-[11px] text-purple-400/80 font-mono">
-                  ({child.pipelineName})
-                </span>
-              )}
             </div>
           </div>
         </td>
 
-        <td className="py-2.5 px-3 whitespace-nowrap">
-          <StatusBadge status={status} />
+        <td className="py-2.5 px-3 text-[#605e5c] font-mono text-[11px] whitespace-nowrap">
+          ExecutePipeline
         </td>
 
-        <td className="py-2.5 px-3 font-mono text-xs text-slate-300 whitespace-nowrap">
+        <td className="py-2.5 px-3 whitespace-nowrap">
+          <StatusBadge 
+            status={status} 
+            onSelectError={onSelectError}
+            errorData={errorData}
+          />
+        </td>
+
+        <td className="py-2.5 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
           {formatDateTime(startTime)}
         </td>
 
-        <td className="py-2.5 px-3 font-mono text-xs text-slate-300 whitespace-nowrap">
+        <td className="py-2.5 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
           {formatDateTime(endTime)}
         </td>
 
-        <td className="py-2.5 px-3 font-mono text-xs text-slate-200 font-medium whitespace-nowrap">
+        <td className="py-2.5 px-3 font-mono text-[#323130] text-xs whitespace-nowrap">
           {formatDuration(duration)}
         </td>
 
-        <td className="py-2.5 px-4 text-right whitespace-nowrap">
-          {status.toLowerCase() === 'failed' ? (
+        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+          {isFailed ? (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                const err = activity.error || child?.error;
-                onSelectError({
-                  activityName: activity.activityName,
-                  activityType: activity.activityType || "Sub-pipeline",
-                  status: status,
-                  activityRunStart: startTime,
-                  activityRunEnd: endTime,
-                  durationInMs: duration,
-                  error: err,
-                  output: err?.rawError || activity.output
-                });
+                onSelectError(errorData);
               }}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition shadow-sm"
+              title="Inspect error diagnostics"
+              className="p-1 rounded text-[#797775] hover:text-[#c42b1c] hover:bg-[#fde7e9] transition"
             >
-              <AlertCircle className="w-3.5 h-3.5" />
-              <span>Error</span>
+              <AlertCircle className="w-3.5 h-3.5 text-[#c42b1c]" />
             </button>
           ) : (
-            <span className="text-slate-600 font-mono text-xs">—</span>
+            <span className="text-[#a19f9d] font-mono text-xs">—</span>
           )}
         </td>
       </tr>
 
-      {/* Expanded Inner Activities of Sub-Pipeline */}
+      {/* Expanded Inner Activities */}
       {isExpanded && child && (
         <>
           {child.activities && child.activities.map((innerAct, idx) => {
@@ -474,6 +518,7 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
                   onOpenSlaConfig={onOpenSlaConfig}
                   onResolveIncident={onResolveIncident}
                   onOpenTableLogs={onOpenTableLogs}
+                  onOpenSidePane={onOpenSidePane}
                 />
               );
             }
@@ -483,6 +528,7 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
                 activity={innerAct}
                 depth={depth + 1}
                 onSelectError={onSelectError}
+                onOpenSidePane={onOpenSidePane}
               />
             );
           })}
@@ -499,17 +545,18 @@ function SubPipelineActivityRow({ activity, depth, onSelectError, onOpenRunHisto
               onOpenSlaConfig={onOpenSlaConfig}
               onResolveIncident={onResolveIncident}
               onOpenTableLogs={onOpenTableLogs}
+              onOpenSidePane={onOpenSidePane}
             />
           ))}
 
           {!hasInnerActivities && !hasInnerChildren && (
-            <tr className="bg-slate-950/40 border-b border-slate-800/40">
+            <tr className="bg-[#f8f8f7] border-b border-[#edebe9]">
               <td 
-                colSpan={6} 
-                style={{ paddingLeft: `${(depth + 1) * 28 + 16}px` }}
-                className="py-2 px-4 text-xs text-slate-500 italic"
+                colSpan={7} 
+                style={{ paddingLeft: `${(depth + 1) * 24 + 16}px` }}
+                className="py-2 px-4 text-xs text-[#797775] italic"
               >
-                No inner activity runs found for this sub-pipeline.
+                No inner activity telemetry recorded for this sub-pipeline.
               </td>
             </tr>
           )}
@@ -528,28 +575,54 @@ export default function PipelineRow({
   onOpenSchedule,
   onOpenSlaConfig,
   onResolveIncident,
-  onOpenTableLogs
+  onOpenTableLogs,
+  onOpenSidePane
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
   const hasActivities = pipeline.activities && pipeline.activities.length > 0;
   const canExpand = hasActivities;
   const isFailed = pipeline.status?.toLowerCase() === 'failed';
+
+  // Close context menu on outside click
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setIsMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const errorData = isFailed ? {
+    activityName: pipeline.pipelineName,
+    activityType: "Pipeline",
+    status: pipeline.status,
+    activityRunStart: pipeline.startTime,
+    activityRunEnd: pipeline.endTime,
+    durationInMs: pipeline.durationInMs,
+    error: pipeline.error,
+    output: pipeline.error?.rawError
+  } : null;
 
   return (
     <>
       <tr 
         onClick={() => canExpand && setIsExpanded(!isExpanded)}
-        className={`group border-b border-slate-800/60 transition-colors ${
+        className={`border-b border-[#edebe9] transition-colors group select-none ${
           canExpand ? "cursor-pointer" : ""
         } ${
           isChild 
-            ? "bg-purple-950/20 hover:bg-purple-950/35" 
-            : "bg-slate-900/80 hover:bg-slate-800/60"
+            ? "bg-[#faf8ff] hover:bg-[#f3edfc]" 
+            : "bg-[#ffffff] hover:bg-[#f8f9fa]"
         }`}
       >
         {/* Name Column */}
-        <td className="py-3 px-4" style={{ paddingLeft: `${depth * 28 + 16}px` }}>
-          <div className="flex items-center gap-2.5">
+        <td className="py-2.5 px-3" style={{ paddingLeft: `${depth * 24 + 16}px` }}>
+          <div className="flex items-center gap-2 min-w-0">
             {canExpand ? (
               <button
                 type="button"
@@ -557,63 +630,43 @@ export default function PipelineRow({
                   e.stopPropagation();
                   setIsExpanded(!isExpanded);
                 }}
-                className="p-1 rounded text-slate-400 group-hover:text-white hover:bg-slate-800 transition"
+                className="p-0.5 rounded text-[#605e5c] hover:text-[#242424] transition"
               >
                 {isExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-blue-400" />
+                  <ChevronDown className="w-3.5 h-3.5 text-[#0f6cbd]" />
                 ) : (
-                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                  <ChevronRight className="w-3.5 h-3.5 text-[#605e5c]" />
                 )}
               </button>
             ) : (
-              <span className="w-6 h-6 inline-block" />
+              <span className="w-4 h-4 inline-block" />
             )}
 
-            {/* Icon */}
-            {isChild ? (
-              <div className="p-1.5 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/30 shrink-0">
-                <GitFork className="w-4 h-4" />
-              </div>
-            ) : (
-              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-                <PlayCircle className="w-4 h-4" />
-              </div>
-            )}
+            {/* Item Icon */}
+            <div className={`p-1 rounded shrink-0 ${
+              isChild 
+                ? 'bg-[#f3e8ff] text-[#773adc] border border-[#773adc]/25' 
+                : 'bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/25'
+            }`}>
+              <GitFork className="w-3.5 h-3.5" />
+            </div>
 
-            {/* Title & Metadata */}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-slate-100 text-sm tracking-tight truncate">
+            {/* Pipeline Title & Run Metadata */}
+            <div className="min-w-0 truncate">
+              <div className="flex items-center gap-2 truncate">
+                <span className="font-semibold text-[#242424] text-xs tracking-tight truncate">
                   {pipeline.pipelineName}
                 </span>
+
                 {isChild && (
-                  <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  <span className="px-1.5 py-0.2 text-[9px] font-medium rounded bg-[#f3e8ff] text-[#773adc] border border-[#773adc]/30">
                     Sub-pipeline
                   </span>
                 )}
-                {pipeline.status?.toLowerCase() === 'scheduled' ? (
-                  <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-purple-950/40 text-purple-300 border border-purple-500/30">
-                    Scheduled Trigger
-                  </span>
-                ) : !pipeline.id?.startsWith("norun-") && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-800 text-slate-400 border border-slate-700">
-                    Latest Run #{pipeline.id?.slice(0, 8)}
-                  </span>
-                )}
-              </div>
-              <div className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">
-                {pipeline.status?.toLowerCase() === 'scheduled' ? (
-                  <span className="text-purple-400">
-                    Trigger: {pipeline.startTime ? formatDateTime(pipeline.startTime) : 'Configured Recurrence'}
-                  </span>
-                ) : pipeline.status?.toLowerCase() === 'not run' ? (
-                  <span>Did not execute on this date</span>
-                ) : pipeline.id?.startsWith("norun-") ? (
-                  "Never executed"
-                ) : (
-                  <span>
-                    Invoked: {pipeline.invokeType || "Manual"}
-                    {pipeline.parentActivityName && ` • Triggered by ${pipeline.parentActivityName}`}
+
+                {!pipeline.id?.startsWith("norun-") && (
+                  <span className="px-1 py-0.2 text-[9px] font-mono text-[#605e5c] bg-[#f3f2f1] border border-[#edebe9] rounded">
+                    #{pipeline.id?.slice(0, 8)}
                   </span>
                 )}
               </div>
@@ -621,143 +674,170 @@ export default function PipelineRow({
           </div>
         </td>
 
+        {/* Item Type Column */}
+        <td className="py-2.5 px-3 text-[#605e5c] font-mono text-[11px] whitespace-nowrap">
+          Pipeline
+        </td>
+
         {/* Status & SLA Column */}
-        <td className="py-3 px-3">
-          <div className="flex flex-col gap-1.5 items-start">
-            <StatusBadge status={pipeline.status} />
-            {isFailed && (
-              pipeline.incident ? (
-                <SlaCountdownBadge
-                  incident={pipeline.incident}
-                  onResolve={onResolveIncident}
-                />
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                  <Clock className="w-3 h-3 text-amber-400 shrink-0 animate-spin" />
-                  <span>SLA: {pipeline.slaConfig?.slaMinutes || 30}m Target</span>
-                </span>
-              )
-            )}
-            {!isChild && pipeline.slaConfig && !isFailed && !['no runs', 'notstarted', 'noruns'].includes(pipeline.status?.toLowerCase()) && (
-              <span className="text-[10px] text-slate-500 font-mono">
-                SLA: {pipeline.slaConfig.slaMinutes}m
-              </span>
+        <td className="py-2.5 px-3 whitespace-nowrap">
+          <div className="flex flex-col gap-1 items-start">
+            <StatusBadge 
+              status={pipeline.status} 
+              onSelectError={onSelectError}
+              errorData={errorData}
+            />
+
+            {isFailed && pipeline.incident && (
+              <SlaCountdownBadge
+                incident={pipeline.incident}
+                onResolve={onResolveIncident}
+              />
             )}
           </div>
         </td>
 
-        {/* Start Time */}
-        <td className="py-3 px-3 font-mono text-xs text-slate-300 whitespace-nowrap">
+        {/* Start Time Column */}
+        <td className="py-2.5 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
           {formatDateTime(pipeline.startTime)}
         </td>
 
-        {/* End Time */}
-        <td className="py-3 px-3 font-mono text-xs text-slate-300 whitespace-nowrap">
+        {/* End Time Column */}
+        <td className="py-2.5 px-3 font-mono text-[#605e5c] text-xs whitespace-nowrap">
           {formatDateTime(pipeline.endTime)}
         </td>
 
-        {/* Duration */}
-        <td className="py-3 px-3 font-mono text-xs text-slate-200 font-medium whitespace-nowrap">
+        {/* Duration Column */}
+        <td className="py-2.5 px-3 font-mono text-[#323130] text-xs whitespace-nowrap font-medium">
           {pipeline.status?.toLowerCase() === 'scheduled' ? (
-            <span className="text-purple-400 font-sans text-xs font-semibold">Upcoming</span>
+            <span className="text-[#773adc] text-xs">Upcoming</span>
           ) : pipeline.status?.toLowerCase() === 'not run' ? (
-            <span className="text-slate-500 font-sans text-xs">—</span>
+            <span className="text-[#797775]">—</span>
           ) : (
             formatDuration(computeDuration(pipeline))
           )}
         </td>
 
-        {/* Actions Column */}
-        <td className="py-3 px-4 text-right whitespace-nowrap">
-          <div className="flex items-center justify-end gap-1.5 flex-wrap">
-            {/* Run History Button */}
-            {!isChild && onOpenRunHistory && (
+        {/* Actions Column (Unified Fluent Context Menu - NO REPETITIVE BUTTONS!) */}
+        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+            {/* Hover Trigger for Side Pane Details */}
+            {onOpenSidePane && (
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenRunHistory(pipeline);
-                }}
-                title="View Execution History & Telemetry"
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition hover:text-white"
+                onClick={() => onOpenSidePane(pipeline)}
+                title="Open detail pane"
+                className="p-1 rounded text-[#797775] hover:text-[#242424] hover:bg-[#f3f2f1] transition opacity-0 group-hover:opacity-100"
               >
-                <History className="w-3.5 h-3.5 text-blue-400" />
-                <span className="hidden xl:inline">History</span>
+                <PanelRightOpen className="w-3.5 h-3.5" />
               </button>
             )}
 
-            {/* Schedules Button */}
-            {!isChild && onOpenSchedule && (
+            {/* Standard Fluent More Options Dropdown (...) */}
+            <div className="relative" ref={menuRef}>
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSchedule(pipeline);
-                }}
-                title="View Pipeline Schedules"
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition hover:text-white"
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                title="More options"
+                className="p-1 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition"
               >
-                <Calendar className="w-3.5 h-3.5 text-purple-400" />
-                <span className="hidden xl:inline">Schedule</span>
+                <MoreHorizontal className="w-4 h-4" />
               </button>
-            )}
 
-            {/* SLA Configuration Button */}
-            {!isChild && onOpenSlaConfig && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSlaConfig(pipeline);
-                }}
-                title="Configure SLA & L1/L2 Alerting"
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition hover:text-white"
-              >
-                <Bell className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden xl:inline">SLA</span>
-              </button>
-            )}
+              {isMenuOpen && (
+                <div className="absolute right-0 mt-1 w-52 rounded bg-[#ffffff] border border-[#edebe9] shadow-xl z-50 overflow-hidden py-1 text-left">
+                  {/* View Details / Side Pane */}
+                  {onOpenSidePane && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenSidePane(pipeline);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
+                    >
+                      <PanelRightOpen className="w-3.5 h-3.5 text-[#0f6cbd]" />
+                      <span>View details</span>
+                    </button>
+                  )}
 
-            {/* Table Logs Button */}
-            {onOpenTableLogs && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenTableLogs(pipeline);
-                }}
-                title="View Lakehouse/Warehouse Table Level Logging"
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-300 border border-cyan-500/30 transition hover:text-white shadow-sm"
-              >
-                <Database className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="hidden xl:inline">Table Logs</span>
-              </button>
-            )}
+                  {/* Run History */}
+                  {!isChild && onOpenRunHistory && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenRunHistory(pipeline);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
+                    >
+                      <History className="w-3.5 h-3.5 text-[#0f6cbd]" />
+                      <span>View run history</span>
+                    </button>
+                  )}
 
-            {/* Diagnostics Error Button */}
-            {isFailed && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const err = pipeline.error;
-                  onSelectError({
-                    activityName: pipeline.pipelineName,
-                    activityType: "Pipeline",
-                    status: pipeline.status,
-                    activityRunStart: pipeline.startTime,
-                    activityRunEnd: pipeline.endTime,
-                    durationInMs: pipeline.durationInMs,
-                    error: err,
-                    output: err?.rawError
-                  });
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 transition shadow-sm"
-              >
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>Error</span>
-              </button>
-            )}
+                  {/* Schedules */}
+                  {!isChild && onOpenSchedule && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenSchedule(pipeline);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-[#773adc]" />
+                      <span>View schedules & triggers</span>
+                    </button>
+                  )}
+
+                  {/* SLA Config */}
+                  {!isChild && onOpenSlaConfig && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenSlaConfig(pipeline);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
+                    >
+                      <Bell className="w-3.5 h-3.5 text-[#b78103]" />
+                      <span>Configure SLA & alerts</span>
+                    </button>
+                  )}
+
+                  {/* Lakehouse Table Logs */}
+                  {onOpenTableLogs && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenTableLogs(pipeline);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
+                    >
+                      <Database className="w-3.5 h-3.5 text-[#008272]" />
+                      <span>Table-level logs</span>
+                    </button>
+                  )}
+
+                  {/* Error Diagnostics (if failed) */}
+                  {isFailed && onSelectError && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onSelectError(errorData);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#c42b1c] hover:bg-[#fde7e9] transition border-t border-[#edebe9] mt-1 pt-1.5"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>View error diagnostics</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </td>
       </tr>
@@ -778,6 +858,8 @@ export default function PipelineRow({
                   onOpenSchedule={onOpenSchedule}
                   onOpenSlaConfig={onOpenSlaConfig}
                   onResolveIncident={onResolveIncident}
+                  onOpenTableLogs={onOpenTableLogs}
+                  onOpenSidePane={onOpenSidePane}
                 />
               );
             }
@@ -787,18 +869,19 @@ export default function PipelineRow({
                 activity={act}
                 depth={depth + 1}
                 onSelectError={onSelectError}
+                onOpenSidePane={onOpenSidePane}
               />
             );
           })}
 
           {!hasActivities && (
-            <tr className="bg-slate-950/40 border-b border-slate-800/40">
+            <tr className="bg-[#f8f8f7] border-b border-[#edebe9]">
               <td 
-                colSpan={6} 
-                style={{ paddingLeft: `${(depth + 1) * 28 + 16}px` }}
-                className="py-3 px-4 text-xs text-slate-500 italic"
+                colSpan={7} 
+                style={{ paddingLeft: `${(depth + 1) * 24 + 16}px` }}
+                className="py-2.5 px-4 text-xs text-[#797775] italic"
               >
-                No activity telemetry recorded yet.
+                No activity telemetry recorded yet for this pipeline run.
               </td>
             </tr>
           )}

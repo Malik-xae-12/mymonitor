@@ -116,94 +116,94 @@ export default function ErrorDetailModal({ activity, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-150">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-150 select-none">
+      <div className="bg-[#ffffff] border border-[#edebe9] rounded shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#edebe9] bg-[#faf9f8]">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400">
+            <div className="p-2.5 rounded bg-[#fde7e9] border border-[#f19999] text-[#a80000]">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-100">
+                <h3 className="text-sm font-semibold text-[#242424]">
                   Activity Execution Failed
                 </h3>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-red-500/20 text-red-300 border border-red-500/30">
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-[#fde7e9] text-[#a80000] border border-[#f19999]">
                   {failureType}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">
-                Activity: <span className="text-slate-200 font-medium">{activity.activityName}</span> ({activity.activityType})
+              <p className="text-xs text-[#605e5c] font-mono mt-0.5">
+                Activity: <span className="text-[#242424] font-medium">{activity.activityName}</span> ({activity.activityType})
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+            className="p-1.5 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-6 text-xs text-slate-200">
+        <div className="p-6 overflow-y-auto space-y-6 text-xs text-[#242424]">
           {/* Main Error Banner */}
-          <div className="p-4 rounded-xl bg-red-950/30 border border-red-500/30 space-y-2">
+          <div className="p-4 rounded bg-[#fdf2f2] border border-[#fecaca] space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-red-400 flex items-center gap-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#a80000] flex items-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 Error Description
               </span>
-              <span className="px-2.5 py-0.5 text-xs font-mono rounded-md bg-red-500/20 text-red-300 border border-red-500/30">
+              <span className="px-2.5 py-0.5 text-xs font-mono rounded bg-[#ffffff] text-[#a80000] border border-[#fecaca] font-semibold">
                 Code: {errorCode}
               </span>
             </div>
-            <p className="text-slate-200 text-sm font-medium leading-relaxed select-text font-mono">
+            <p className="text-[#242424] text-xs font-medium leading-relaxed select-text font-mono">
               {errorMessage}
             </p>
           </div>
 
           {/* Quick Metrics */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800">
-              <div className="text-[11px] text-slate-400">Target Object</div>
-              <div className="text-xs font-mono text-slate-200 truncate mt-0.5 font-medium">{target}</div>
+            <div className="p-3 rounded bg-[#faf9f8] border border-[#edebe9]">
+              <div className="text-[11px] text-[#605e5c]">Target Object</div>
+              <div className="text-xs font-mono text-[#242424] truncate mt-0.5 font-medium">{target}</div>
             </div>
-            <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800">
-              <div className="text-[11px] text-slate-400">Duration</div>
-              <div className="text-xs font-mono text-slate-200 mt-0.5 font-medium">
+            <div className="p-3 rounded bg-[#faf9f8] border border-[#edebe9]">
+              <div className="text-[11px] text-[#605e5c]">Duration</div>
+              <div className="text-xs font-mono text-[#242424] mt-0.5 font-medium">
                 {activity.durationInMs ? `${(activity.durationInMs / 1000).toFixed(1)}s` : 'N/A'}
               </div>
             </div>
-            <div className="p-3 rounded-xl bg-slate-950/40 border border-slate-800">
-              <div className="text-[11px] text-slate-400">Failure Timestamp</div>
-              <div className="text-xs font-mono text-slate-200 truncate mt-0.5 font-medium">
+            <div className="p-3 rounded bg-[#faf9f8] border border-[#edebe9]">
+              <div className="text-[11px] text-[#605e5c]">Failure Timestamp</div>
+              <div className="text-xs font-mono text-[#242424] truncate mt-0.5 font-medium">
                 {activity.activityRunEnd ? new Date(activity.activityRunEnd).toLocaleString() : 'N/A'}
               </div>
             </div>
           </div>
 
           {/* AI DIAGNOSTICS SECTION */}
-          <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-b from-indigo-950/20 via-slate-950/40 to-slate-950/40 p-5 space-y-4 shadow-xl shadow-indigo-950/20">
-            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-indigo-500/20">
+          <div className="rounded border border-[#c7e0f4] bg-[#eff6fc]/30 p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[#c7e0f4]">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <div className="p-2 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]">
                   <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-[#242424] flex items-center gap-2">
                     AI Troubleshooting & Fix Assistant
-                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    <span className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]">
                       Gemini 3.6 Flash
                     </span>
                     {aiData?.cached && (
-                      <span className="px-1.5 py-0.2 text-[9px] font-mono rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      <span className="px-1.5 py-0.2 text-[9px] font-mono rounded bg-[#dff6dd] text-[#107c41] border border-[#92c353]">
                         ⚡ Instant Cached
                       </span>
                     )}
                   </h4>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-[#605e5c]">
                     Automated root cause analysis, probable causes, and step-by-step fix guide
                   </p>
                 </div>
@@ -212,7 +212,7 @@ export default function ErrorDetailModal({ activity, onClose }) {
               {!aiData && !isLoadingAi && (
                 <button
                   onClick={() => fetchAiDiagnosis(false)}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold text-xs transition shadow-lg shadow-indigo-500/25 flex items-center gap-2"
+                  className="px-4 py-2 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white font-medium text-xs transition shadow-sm flex items-center gap-2"
                 >
                   <Sparkles className="w-4 h-4 animate-pulse" />
                   <span>Analyze & Get Fix Steps</span>
@@ -224,18 +224,18 @@ export default function ErrorDetailModal({ activity, onClose }) {
                   <button
                     onClick={handleCopyAllFix}
                     title="Copy full troubleshooting guide to clipboard"
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition flex items-center gap-1.5"
+                    className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#242424] text-xs font-medium border border-[#d1d1d1] transition flex items-center gap-1.5"
                   >
-                    {copiedAllFix ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedAllFix ? <Check className="w-3.5 h-3.5 text-[#107c41]" /> : <Copy className="w-3.5 h-3.5 text-[#605e5c]" />}
                     <span>{copiedAllFix ? "Copied Guide!" : "Copy Fix Guide"}</span>
                   </button>
                   <button
                     onClick={() => fetchAiDiagnosis(true)}
                     disabled={isLoadingAi}
                     title="Re-analyze and refresh AI advice"
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition"
+                    className="p-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] border border-[#d1d1d1] transition"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAi ? "animate-spin text-cyan-400" : ""}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAi ? "animate-spin text-[#0f6cbd]" : ""}`} />
                   </button>
                 </div>
               )}
@@ -245,14 +245,14 @@ export default function ErrorDetailModal({ activity, onClose }) {
             {isLoadingAi && (
               <div className="p-8 text-center space-y-3">
                 <div className="relative w-10 h-10 mx-auto">
-                  <RefreshCw className="w-10 h-10 text-indigo-400 animate-spin" />
-                  <Sparkles className="w-4 h-4 text-cyan-300 absolute inset-0 m-auto animate-pulse" />
+                  <RefreshCw className="w-10 h-10 text-[#0f6cbd] animate-spin" />
+                  <Sparkles className="w-4 h-4 text-[#0078d4] absolute inset-0 m-auto animate-pulse" />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold text-slate-200">
+                  <p className="text-xs font-semibold text-[#242424]">
                     Gemini AI is analyzing error diagnostics and pipeline context...
                   </p>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-[#605e5c]">
                     Formulating root cause and step-by-step resolution checklist
                   </p>
                 </div>
@@ -261,20 +261,20 @@ export default function ErrorDetailModal({ activity, onClose }) {
 
             {/* AI Error */}
             {aiError && (
-              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="p-3.5 rounded bg-[#fde7e9] border border-[#f19999] text-[#a80000] text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#a80000] shrink-0" />
                 <span>{aiError}</span>
               </div>
             )}
 
             {/* AI Initial Prompt Card */}
             {!aiData && !isLoadingAi && !aiError && (
-              <div className="p-6 text-center space-y-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center justify-center mx-auto">
+              <div className="p-6 text-center space-y-2 rounded bg-[#ffffff] border border-[#edebe9]">
+                <div className="w-10 h-10 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4] flex items-center justify-center mx-auto">
                   <Wrench className="w-5 h-5" />
                 </div>
-                <h5 className="font-semibold text-slate-200 text-xs">Need help resolving this failure?</h5>
-                <p className="text-[11px] text-slate-400 max-w-lg mx-auto">
+                <h5 className="font-semibold text-[#242424] text-xs">Need help resolving this failure?</h5>
+                <p className="text-[11px] text-[#605e5c] max-w-lg mx-auto">
                   Click <strong>Analyze & Get Fix Steps</strong> to let Gemini AI review the error code, activity type, and execution context to generate an immediate root cause explanation and resolution checklist.
                 </p>
               </div>
@@ -284,23 +284,23 @@ export default function ErrorDetailModal({ activity, onClose }) {
             {aiData && !isLoadingAi && (
               <div className="space-y-4 animate-in fade-in duration-200">
                 {/* 1. Root Cause */}
-                <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-500/30 space-y-1.5">
+                <div className="p-4 rounded bg-[#ffffff] border border-[#c7e0f4] space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#0f6cbd] flex items-center gap-1.5">
                       <HelpCircle className="w-3.5 h-3.5" />
                       Root Cause Analysis
                     </span>
                     {aiData.severity && (
                       <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        aiData.severity.toLowerCase() === 'critical' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
-                        aiData.severity.toLowerCase() === 'high' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                        'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        aiData.severity.toLowerCase() === 'critical' ? 'bg-[#fde7e9] text-[#a80000] border border-[#f19999]' :
+                        aiData.severity.toLowerCase() === 'high' ? 'bg-[#fff4ce] text-[#8a660a] border border-[#fed9cc]' :
+                        'bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]'
                       }`}>
                         Severity: {aiData.severity}
                       </span>
                     )}
                   </div>
-                  <p className="text-slate-100 text-xs leading-relaxed font-medium">
+                  <p className="text-[#242424] text-xs leading-relaxed font-medium">
                     {aiData.rootCause}
                   </p>
                 </div>
@@ -308,14 +308,14 @@ export default function ErrorDetailModal({ activity, onClose }) {
                 {/* 2. Likely Causes */}
                 {aiData.likelyCauses && aiData.likelyCauses.length > 0 && (
                   <div className="space-y-1.5">
-                    <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[11px] font-semibold text-[#242424] flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-[#8a660a]" />
                       Likely Causes:
                     </span>
                     <ul className="grid grid-cols-1 gap-1.5">
                       {aiData.likelyCauses.map((cause, idx) => (
-                        <li key={`cause-${idx}`} className="p-2 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px] text-slate-300 flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
+                        <li key={`cause-${idx}`} className="p-2 rounded bg-[#ffffff] border border-[#edebe9] text-[11px] text-[#242424] flex items-start gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#8a660a] mt-1.5 shrink-0" />
                           <span>{cause}</span>
                         </li>
                       ))}
@@ -326,17 +326,17 @@ export default function ErrorDetailModal({ activity, onClose }) {
                 {/* 3. Actionable Fix Steps */}
                 {aiData.fixSteps && aiData.fixSteps.length > 0 && (
                   <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-cyan-400 flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-[#0f6cbd] flex items-center gap-1.5">
                       <Wrench className="w-3.5 h-3.5" />
                       Step-by-Step Resolution Guide:
                     </span>
                     <div className="space-y-1.5">
                       {aiData.fixSteps.map((step, idx) => (
-                        <div key={`step-${idx}`} className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition flex items-start gap-2.5">
-                          <div className="w-5 h-5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                        <div key={`step-${idx}`} className="p-2.5 rounded bg-[#ffffff] border border-[#edebe9] hover:border-[#c7e0f4] transition flex items-start gap-2.5">
+                          <div className="w-5 h-5 rounded-full bg-[#eff6fc] border border-[#c7e0f4] text-[#0f6cbd] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                             {idx + 1}
                           </div>
-                          <div className="text-xs text-slate-200 leading-relaxed font-medium">
+                          <div className="text-xs text-[#242424] leading-relaxed font-medium">
                             {step}
                           </div>
                         </div>
@@ -349,19 +349,19 @@ export default function ErrorDetailModal({ activity, onClose }) {
                 {aiData.fixScript && (
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-[#107c41] flex items-center gap-1.5">
                         <Code className="w-3.5 h-3.5" />
                         Remediation Script / Command ({aiData.fixScriptLanguage || 'Code'})
                       </span>
                       <button
                         onClick={() => handleCopyScript(aiData.fixScript)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700 transition"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#242424] text-[11px] border border-[#d1d1d1] transition"
                       >
-                        {copiedScript ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        {copiedScript ? <Check className="w-3 h-3 text-[#107c41]" /> : <Copy className="w-3 h-3 text-[#605e5c]" />}
                         <span>{copiedScript ? "Copied Script" : "Copy Code"}</span>
                       </button>
                     </div>
-                    <pre className="p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-emerald-300 overflow-x-auto select-text leading-relaxed">
+                    <pre className="p-3 rounded bg-[#f3f2f1] border border-[#e1dfdd] font-mono text-[11px] text-[#107c41] overflow-x-auto select-text leading-relaxed">
                       {aiData.fixScript}
                     </pre>
                   </div>
@@ -369,10 +369,10 @@ export default function ErrorDetailModal({ activity, onClose }) {
 
                 {/* 5. Prevention Tip */}
                 {aiData.preventionTip && (
-                  <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start gap-2.5 text-[11px] text-slate-300">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="p-3 rounded bg-[#f0fdf4] border border-[#bbf7d0] flex items-start gap-2.5 text-[11px] text-[#15803d]">
+                    <ShieldCheck className="w-4 h-4 text-[#107c41] shrink-0 mt-0.5" />
                     <div>
-                      <span className="font-semibold text-slate-200">Prevention Tip: </span>
+                      <span className="font-semibold text-[#15803d]">Prevention Tip: </span>
                       <span>{aiData.preventionTip}</span>
                     </div>
                   </div>
@@ -384,32 +384,32 @@ export default function ErrorDetailModal({ activity, onClose }) {
           {/* Raw JSON Trace */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                <Terminal className="w-4 h-4 text-blue-400" />
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#242424]">
+                <Terminal className="w-4 h-4 text-[#0f6cbd]" />
                 Raw Execution Diagnostics & Output JSON
               </div>
               <button
                 onClick={handleCopyDiagnostics}
-                className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#242424] border border-[#d1d1d1] transition font-medium"
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? <Check className="w-3.5 h-3.5 text-[#107c41]" /> : <Copy className="w-3.5 h-3.5 text-[#605e5c]" />}
                 <span>{copied ? "Copied!" : "Copy Diagnostics"}</span>
               </button>
             </div>
-            <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800/90 text-xs font-mono text-slate-300 overflow-x-auto max-h-48 leading-relaxed select-text">
+            <pre className="p-4 rounded bg-[#faf9f8] border border-[#edebe9] text-xs font-mono text-[#242424] overflow-x-auto max-h-48 leading-relaxed select-text">
               {jsonString}
             </pre>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/70 flex items-center justify-between">
-          <div className="text-[11px] text-slate-500">
+        <div className="px-6 py-3.5 border-t border-[#edebe9] bg-[#faf9f8] flex items-center justify-between">
+          <div className="text-[11px] text-[#605e5c]">
             Powered by Google Gemini 3.6 Flash & Real-Time Fabric Diagnostics
           </div>
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition"
+            className="px-4 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#242424] border border-[#d1d1d1] text-xs font-medium transition"
           >
             Close
           </button>

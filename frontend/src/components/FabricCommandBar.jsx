@@ -214,17 +214,6 @@ export default function FabricCommandBar({
           </button>
         )}
 
-        {/* Table Log Settings */}
-        {onOpenTableLogConfig && (
-          <button
-            onClick={onOpenTableLogConfig}
-            title="Configure Lakehouse table-level column mappings"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium text-[#323130] hover:text-[#008272] hover:bg-[#f3f2f1] transition border border-transparent hover:border-[#edebe9]"
-          >
-            <Database className="w-3.5 h-3.5 text-[#008272]" />
-            <span>Lakehouse Config</span>
-          </button>
-        )}
       </div>
 
       {/* Right: Table Keyword Search */}

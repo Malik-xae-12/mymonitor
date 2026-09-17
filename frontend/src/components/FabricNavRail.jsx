@@ -1,112 +1,92 @@
 import React from 'react';
 import { 
-  Home, 
-  Box, 
   Activity, 
-  GitFork, 
-  Database,
-  Radio
+  TableProperties,
+  Layers,
+  Database
 } from 'lucide-react';
 
-export default function FabricNavRail({ onOpenTableLogConfig, currentView = 'monitoring', onNavigateMonitoring }) {
+export default function FabricNavRail({ 
+  currentView = 'monitoring', 
+  onNavigateMonitoring,
+  onNavigateTableLogs,
+  workspaceName = 'Current Workspace'
+}) {
   const isMonitoringActive = currentView === 'monitoring';
-  const isConfigActive = currentView === 'table-log-config';
+  const isTableLogsActive = currentView === 'table-logs';
 
   return (
-    <aside className="w-12 bg-[#f5f5f5] border-r border-[#edebe9] flex flex-col justify-between items-center py-2 shrink-0 z-30 select-none">
-      {/* Top Nav Items */}
-      <nav className="flex flex-col items-center space-y-1 w-full">
-        {/* Home */}
-        <button
-          onClick={onNavigateMonitoring}
-          title="Home"
-          className="w-10 h-10 flex items-center justify-center rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#ebebeb] transition relative group"
-        >
-          <Home className="w-5 h-5" />
-          <span className="sr-only">Home</span>
-        </button>
+    <aside className="w-52 bg-[#f5f5f5] border-r border-[#edebe9] flex flex-col justify-between p-2.5 shrink-0 z-30 select-none">
+      {/* Top Nav: App Sections with L1 and L2 names */}
+      <div className="space-y-3">
+        {/* Navigation Category Header */}
+        <div className="px-2 pt-1">
+          <span className="text-[10px] font-bold text-[#797775] uppercase tracking-wider block">
+            Navigation
+          </span>
+        </div>
 
-        {/* Workspaces */}
-        <button
-          onClick={onNavigateMonitoring}
-          title="Workspaces"
-          className="w-10 h-10 flex items-center justify-center rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#ebebeb] transition relative group"
-        >
-          <Box className="w-5 h-5" />
-          <span className="sr-only">Workspaces</span>
-        </button>
-
-        {/* Monitoring Hub */}
-        <button
-          onClick={onNavigateMonitoring}
-          title={isMonitoringActive ? "Monitoring hub (Active)" : "Monitoring hub"}
-          className={`w-10 h-10 flex items-center justify-center rounded transition relative group ${
-            isMonitoringActive
-              ? "bg-[#ffffff] text-[#0f6cbd] shadow-sm"
-              : "text-[#605e5c] hover:text-[#242424] hover:bg-[#ebebeb]"
-          }`}
-        >
-          {isMonitoringActive && (
-            <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#0f6cbd]"></span>
-          )}
-          <Activity className={`w-5 h-5 ${isMonitoringActive ? "text-[#0f6cbd]" : ""}`} />
-          <span className="sr-only">Monitoring hub</span>
-        </button>
-
-        {/* Real-Time Hub */}
-        <button
-          title="Real-Time hub"
-          className="w-10 h-10 flex items-center justify-center rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#ebebeb] transition relative group"
-        >
-          <Radio className="w-5 h-5" />
-          <span className="sr-only">Real-Time hub</span>
-        </button>
-
-        {/* Data Pipelines */}
-        <button
-          onClick={onNavigateMonitoring}
-          title="Data Pipelines"
-          className="w-10 h-10 flex items-center justify-center rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#ebebeb] transition relative group"
-        >
-          <GitFork className="w-5 h-5" />
-          <span className="sr-only">Pipelines</span>
-        </button>
-
-        {/* Lakehouse / Warehouse Ingestion */}
-        {onOpenTableLogConfig && (
+        <nav className="space-y-1">
+          {/* L1: Monitoring Hub (Pipelines Telemetry) */}
           <button
-            onClick={onOpenTableLogConfig}
-            title={isConfigActive ? "Lakehouse Table Logs Configuration (Active)" : "Lakehouse Table Logs Configuration"}
-            className={`w-10 h-10 flex items-center justify-center rounded transition relative group ${
-              isConfigActive
-                ? "bg-[#ffffff] text-[#0f6cbd] shadow-sm"
-                : "text-[#605e5c] hover:text-[#0f6cbd] hover:bg-[#ebebeb]"
+            type="button"
+            onClick={onNavigateMonitoring}
+            title="Monitoring hub (L1 - Data Pipelines Telemetry)"
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition relative group text-left ${
+              isMonitoringActive
+                ? "bg-white text-[#0f6cbd] font-semibold shadow-xs border border-[#edebe9]"
+                : "text-[#323130] hover:text-[#242424] hover:bg-[#ebebeb] font-medium"
             }`}
           >
-            {isConfigActive && (
-              <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#0f6cbd]"></span>
+            {isMonitoringActive && (
+              <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#0f6cbd]" />
             )}
-            <Database className={`w-5 h-5 ${isConfigActive ? "text-[#0f6cbd]" : ""}`} />
-            <span className="sr-only">Lakehouse Logs</span>
+            <Activity className={`w-4 h-4 shrink-0 ${isMonitoringActive ? "text-[#0f6cbd]" : "text-[#605e5c]"}`} />
+            <span className="truncate flex-1">Monitoring hub</span>
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+              isMonitoringActive 
+                ? "bg-[#ebf3fc] text-[#0f6cbd]" 
+                : "bg-[#e1dfdd] text-[#605e5c]"
+            }`}>
+              L1
+            </span>
           </button>
-        )}
-      </nav>
 
-      {/* Bottom: Fabric Workload Experience Switcher */}
-      <div className="flex flex-col items-center w-full pt-2 border-t border-[#edebe9]">
-        <button
-          title="Fabric Experience: Data Factory"
-          className="w-10 h-10 flex items-center justify-center rounded bg-[#ffffff] hover:bg-[#f3f2f1] text-[#008272] transition border border-[#e1dfdd] shadow-sm"
-        >
-          {/* Data Factory / Synapse stylized icon */}
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="3" width="7" height="7" rx="1" fill="#008272" fillOpacity="0.2" />
-            <rect x="14" y="3" width="7" height="7" rx="1" fill="#0f6cbd" fillOpacity="0.2" />
-            <rect x="14" y="14" width="7" height="7" rx="1" fill="#008272" fillOpacity="0.2" />
-            <path d="M7 10v4a2 2 0 0 0 2 2h5" />
-          </svg>
-          <span className="sr-only">Data Factory</span>
-        </button>
+          {/* L2: Table Logs (Bronze & Silver Lakehouse/Warehouse Ingestion) */}
+          <button
+            type="button"
+            onClick={onNavigateTableLogs}
+            title="Table logs (L2 - Lakehouse / Warehouse Ingestion Logs)"
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition relative group text-left ${
+              isTableLogsActive
+                ? "bg-white text-[#117865] font-semibold shadow-xs border border-[#edebe9]"
+                : "text-[#323130] hover:text-[#242424] hover:bg-[#ebebeb] font-medium"
+            }`}
+          >
+            {isTableLogsActive && (
+              <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#117865]" />
+            )}
+            <TableProperties className={`w-4 h-4 shrink-0 ${isTableLogsActive ? "text-[#117865]" : "text-[#605e5c]"}`} />
+            <span className="truncate flex-1">Table logs</span>
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+              isTableLogsActive 
+                ? "bg-[#e3f7ef] text-[#117865]" 
+                : "bg-[#e1dfdd] text-[#605e5c]"
+            }`}>
+              L2
+            </span>
+          </button>
+        </nav>
+      </div>
+
+      {/* Bottom: Current Scope Indicator */}
+      <div className="pt-2 border-t border-[#edebe9] px-2">
+        <div className="flex items-center gap-1.5 text-[11px] text-[#605e5c]">
+          <Database className="w-3.5 h-3.5 text-[#008272] shrink-0" />
+          <span className="truncate font-medium text-[#242424]" title={workspaceName}>
+            {workspaceName}
+          </span>
+        </div>
       </div>
     </aside>
   );

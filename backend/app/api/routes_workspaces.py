@@ -27,30 +27,51 @@ class TestEmailRequest(BaseModel):
     pipelineName: Optional[str] = "Pipeline"
 
 class SqlTablesRequest(BaseModel):
-    serverFqdn: str
-    databaseName: str
+    serverFqdn: Optional[str] = None
+    databaseName: Optional[str] = None
+    server_fqdn: Optional[str] = None
+    database_name: Optional[str] = None
 
 class SqlColumnsRequest(BaseModel):
-    serverFqdn: str
-    databaseName: str
-    schemaName: str
-    tableName: str
+    serverFqdn: Optional[str] = None
+    databaseName: Optional[str] = None
+    schemaName: Optional[str] = None
+    tableName: Optional[str] = None
+    server_fqdn: Optional[str] = None
+    database_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    table_name: Optional[str] = None
 
 class SaveTableLogMappingRequest(BaseModel):
-    artifactType: str
-    artifactId: str
-    artifactName: str
-    serverFqdn: str
-    databaseName: str
-    batchHeaderSchema: str
-    batchHeaderTable: str
-    batchHeaderMapping: Dict[str, Any]
-    bronzeSchema: str
-    bronzeTable: str
-    bronzeMapping: Dict[str, Any]
-    silverSchema: str
-    silverTable: str
-    silverMapping: Dict[str, Any]
+    artifactType: Optional[str] = None
+    artifactId: Optional[str] = None
+    artifactName: Optional[str] = None
+    serverFqdn: Optional[str] = None
+    databaseName: Optional[str] = None
+    batchHeaderSchema: Optional[str] = None
+    batchHeaderTable: Optional[str] = None
+    batchHeaderMapping: Optional[Dict[str, Any]] = None
+    bronzeSchema: Optional[str] = None
+    bronzeTable: Optional[str] = None
+    bronzeMapping: Optional[Dict[str, Any]] = None
+    silverSchema: Optional[str] = None
+    silverTable: Optional[str] = None
+    silverMapping: Optional[Dict[str, Any]] = None
+
+    artifact_type: Optional[str] = None
+    artifact_id: Optional[str] = None
+    artifact_name: Optional[str] = None
+    server_fqdn: Optional[str] = None
+    database_name: Optional[str] = None
+    batch_header_schema: Optional[str] = None
+    batch_header_table: Optional[str] = None
+    batch_header_mapping: Optional[Dict[str, Any]] = None
+    bronze_schema: Optional[str] = None
+    bronze_table: Optional[str] = None
+    bronze_mapping: Optional[Dict[str, Any]] = None
+    silver_schema: Optional[str] = None
+    silver_table: Optional[str] = None
+    silver_mapping: Optional[Dict[str, Any]] = None
 
 class AiFixRequest(BaseModel):
     pipelineName: Optional[str] = "Pipeline"
@@ -324,8 +345,12 @@ async def get_sql_tables(workspace_id: str, payload: SqlTablesRequest):
     Dynamically connects to the selected Warehouse or Lakehouse SQL endpoint
     and lists all user schemas and tables.
     """
+    server = (payload.serverFqdn or payload.server_fqdn or "").strip()
+    db = (payload.databaseName or payload.database_name or "").strip()
+    if not server or not db:
+        return {"tables": []}
     try:
-        tables = await table_log_service.get_schemas_and_tables(payload.serverFqdn, payload.databaseName)
+        tables = await table_log_service.get_schemas_and_tables(server, db)
         return {"tables": tables}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query tables from SQL Endpoint: {e}")
@@ -335,13 +360,17 @@ async def get_sql_columns(workspace_id: str, payload: SqlColumnsRequest):
     """
     Dynamically fetches all columns and data types for the selected schema and table.
     """
+    server = (payload.serverFqdn or payload.server_fqdn or "").strip()
+    db = (payload.databaseName or payload.database_name or "").strip()
+    schema = (payload.schemaName or payload.schema_name or "").strip()
+    table = (payload.tableName or payload.table_name or "").strip()
+    if not server or not db or not schema or not table:
+        return {"columns": []}
     try:
-        columns = await table_log_service.get_table_columns(
-            payload.serverFqdn, payload.databaseName, payload.schemaName, payload.tableName
-        )
+        columns = await table_log_service.get_table_columns(server, db, schema, table)
         return {"columns": columns}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to query columns for {payload.schemaName}.{payload.tableName}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to query columns for {schema}.{table}: {e}")
 
 @router.get("/{workspace_id}/table-log-mapping")
 async def get_table_log_mapping(workspace_id: str):
@@ -359,20 +388,20 @@ async def save_table_log_mapping(workspace_id: str, payload: SaveTableLogMapping
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     await db_service.save_table_log_mapping(
         workspace_id=workspace_id,
-        artifact_type=payload.artifactType,
-        artifact_id=payload.artifactId,
-        artifact_name=payload.artifactName,
-        server_fqdn=payload.serverFqdn,
-        database_name=payload.databaseName,
-        batch_header_schema=payload.batchHeaderSchema,
-        batch_header_table=payload.batchHeaderTable,
-        batch_header_mapping=payload.batchHeaderMapping,
-        bronze_schema=payload.bronzeSchema,
-        bronze_table=payload.bronzeTable,
-        bronze_mapping=payload.bronzeMapping,
-        silver_schema=payload.silverSchema,
-        silver_table=payload.silverTable,
-        silver_mapping=payload.silverMapping,
+        artifact_type=payload.artifactType or payload.artifact_type or "",
+        artifact_id=payload.artifactId or payload.artifact_id or "",
+        artifact_name=payload.artifactName or payload.artifact_name or "",
+        server_fqdn=payload.serverFqdn or payload.server_fqdn or "",
+        database_name=payload.databaseName or payload.database_name or "",
+        batch_header_schema=payload.batchHeaderSchema or payload.batch_header_schema or "",
+        batch_header_table=payload.batchHeaderTable or payload.batch_header_table or "",
+        batch_header_mapping=payload.batchHeaderMapping or payload.batch_header_mapping or {},
+        bronze_schema=payload.bronzeSchema or payload.bronze_schema or "",
+        bronze_table=payload.bronzeTable or payload.bronze_table or "",
+        bronze_mapping=payload.bronzeMapping or payload.bronze_mapping or {},
+        silver_schema=payload.silverSchema or payload.silver_schema or "",
+        silver_table=payload.silverTable or payload.silver_table or "",
+        silver_mapping=payload.silverMapping or payload.silver_mapping or {},
         updated_at=now_iso
     )
     return {"status": "success", "workspaceId": workspace_id, "updatedAt": now_iso}

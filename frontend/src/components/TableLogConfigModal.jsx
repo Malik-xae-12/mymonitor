@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Database, 
@@ -9,7 +9,8 @@ import {
   ChevronRight,
   TableProperties,
   Trash2,
-  CheckCircle2
+  CheckCircle2,
+  Info
 } from 'lucide-react';
 
 export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSaved }) {
@@ -37,6 +38,10 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
   const [isSaving, setIsSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
   const [activeTab, setActiveTab] = useState('source'); // 'source' | 'batch_header' | 'bronze' | 'silver'
+
+  // Request sequencing to prevent async race conditions
+  const activeReqIdRef = useRef(0);
+  const abortCtrlRef = useRef(null);
 
   // Load existing mapping and workspace artifacts
   useEffect(() => {
@@ -81,15 +86,6 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
             }
           }
         }
-
-        // If no saved mapping, default artifact selection if available
-        if (artList.length > 0) {
-          const firstArt = artList[0];
-          setSelectedArtifactId(firstArt.id);
-          if (firstArt.serverFqdn && firstArt.databaseName) {
-            await fetchTables(firstArt.serverFqdn, firstArt.databaseName);
-          }
-        }
       } catch (err) {
         console.error("Error loading config:", err);
         setStatusMsg({ type: 'error', text: 'Failed to load workspace data sources.' });
@@ -101,14 +97,44 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
     loadData();
   }, [isOpen, workspaceId]);
 
+function extractErrorText(err, defaultMsg) {
+  if (!err) return defaultMsg;
+  if (typeof err === 'string') return err;
+  const d = err.detail !== undefined ? err.detail : err;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) {
+    return d.map(item => (typeof item === 'object' ? (item.msg || JSON.stringify(item)) : String(item))).join('; ');
+  }
+  if (typeof d === 'object') {
+    return d.msg || d.message || JSON.stringify(d);
+  }
+  return String(d);
+}
+
   const fetchTables = async (serverFqdn, databaseName, preBH = '', preBR = '', preSL = '') => {
+    if (abortCtrlRef.current) {
+      abortCtrlRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    abortCtrlRef.current = abortCtrl;
+    const currentReqId = ++activeReqIdRef.current;
+
     setIsLoadingTables(true);
+    setStatusMsg(null);
+    setAvailableTables([]);
+
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/tables`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverFqdn, databaseName })
+        body: JSON.stringify({ serverFqdn, databaseName }),
+        signal: abortCtrl.signal
       });
+
+      if (currentReqId !== activeReqIdRef.current) {
+        return; // Superseded by a newer selection
+      }
+
       if (res.ok) {
         const json = await res.json();
         const tbls = json.tables || [];
@@ -129,16 +155,27 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
           const [s, t] = preSL.split('.');
           fetchCols(serverFqdn, databaseName, s, t, setSilverCols);
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setStatusMsg({ type: 'error', text: extractErrorText(errJson, 'Could not connect to SQL Endpoint to fetch tables.') });
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
+      if (currentReqId !== activeReqIdRef.current) return;
       console.error("Failed to fetch tables:", e);
       setStatusMsg({ type: 'error', text: 'Could not connect to SQL Endpoint to fetch tables.' });
     } finally {
-      setIsLoadingTables(false);
+      if (currentReqId === activeReqIdRef.current) {
+        setIsLoadingTables(false);
+      }
     }
   };
 
   const fetchCols = async (serverFqdn, databaseName, schemaName, tableName, setColState) => {
+    if (!serverFqdn || !databaseName || !schemaName || !tableName) {
+      setColState([]);
+      return;
+    }
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/columns`, {
         method: 'POST',
@@ -148,25 +185,31 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
       if (res.ok) {
         const json = await res.json();
         setColState(json.columns || []);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setStatusMsg({ type: 'error', text: extractErrorText(errJson, `Could not fetch columns for ${schemaName}.${tableName}.`) });
       }
     } catch (e) {
       console.error(`Failed to fetch columns for ${schemaName}.${tableName}:`, e);
+      setStatusMsg({ type: 'error', text: `Failed to fetch columns for ${schemaName}.${tableName}.` });
     }
   };
 
   const handleArtifactChange = (artId) => {
     setSelectedArtifactId(artId);
+    setAvailableTables([]);
+    setBatchHeaderTable('');
+    setBronzeTable('');
+    setSilverTable('');
+    setBatchHeaderCols([]);
+    setBronzeCols([]);
+    setSilverCols([]);
+    setBatchHeaderMapping({});
+    setBronzeMapping({});
+    setSilverMapping({});
+    setStatusMsg(null);
     const art = artifacts.find(a => a.id === artId);
     if (art && art.serverFqdn && art.databaseName) {
-      setBatchHeaderTable('');
-      setBronzeTable('');
-      setSilverTable('');
-      setBatchHeaderCols([]);
-      setBronzeCols([]);
-      setSilverCols([]);
-      setBatchHeaderMapping({});
-      setBronzeMapping({});
-      setSilverMapping({});
       fetchTables(art.serverFqdn, art.databaseName);
     }
   };
@@ -209,15 +252,30 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
       artifact_type: art.type,
       server_fqdn: art.serverFqdn,
       database_name: art.databaseName,
-      batch_header_schema: bhSchema || null,
-      batch_header_table: bhTable || null,
-      bronze_schema: brSchema || null,
-      bronze_table: brTable || null,
-      silver_schema: slSchema || null,
-      silver_table: slTable || null,
+      batch_header_schema: bhSchema || '',
+      batch_header_table: bhTable || '',
+      bronze_schema: brSchema || '',
+      bronze_table: brTable || '',
+      silver_schema: slSchema || '',
+      silver_table: slTable || '',
       batch_header_mapping: batchHeaderMapping,
       bronze_mapping: bronzeMapping,
-      silver_mapping: silverMapping
+      silver_mapping: silverMapping,
+      // camelCase aliases
+      artifactId: art.id,
+      artifactName: art.displayName,
+      artifactType: art.type,
+      serverFqdn: art.serverFqdn,
+      databaseName: art.databaseName,
+      batchHeaderSchema: bhSchema || '',
+      batchHeaderTable: bhTable || '',
+      bronzeSchema: brSchema || '',
+      bronzeTable: brTable || '',
+      silverSchema: slSchema || '',
+      silverTable: slTable || '',
+      batchHeaderMapping: batchHeaderMapping,
+      bronzeMapping: bronzeMapping,
+      silverMapping: silverMapping
     };
 
     try {
@@ -232,7 +290,7 @@ export default function TableLogConfigModal({ workspaceId, isOpen, onClose, onSa
         setTimeout(() => onClose(), 1200);
       } else {
         const err = await res.json().catch(() => ({}));
-        setStatusMsg({ type: 'error', text: err.detail || 'Failed to save mapping.' });
+        setStatusMsg({ type: 'error', text: extractErrorText(err, 'Failed to save mapping.') });
       }
     } catch (e) {
       console.error("Save error:", e);

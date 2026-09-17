@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Database, 
   TableProperties, 
@@ -15,8 +15,12 @@ import {
   Layers,
   FileSpreadsheet,
   Info,
-  SlidersHorizontal,
-  ExternalLink
+  X,
+  Search,
+  CheckSquare,
+  ShieldCheck,
+  Server,
+  FolderTree
 } from 'lucide-react';
 
 export default function TableLogConfigPage({ 
@@ -49,8 +53,30 @@ export default function TableLogConfigPage({
   const [isSaving, setIsSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
 
-  // Stepper state: 1: 'source', 2: 'batch_header', 3: 'bronze', 4: 'silver'
+  // Wizard state: 1: 'Choose data source', 2: 'Choose log tables', 3: 'Map audit columns', 4: 'Review and Create'
   const [activeStep, setActiveStep] = useState(1);
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('ALL');
+  const [mappingSubTab, setMappingSubTab] = useState('batch_header'); // 'batch_header' | 'bronze' | 'silver'
+
+  // Request sequencing to prevent async race conditions
+  const activeReqIdRef = useRef(0);
+  const abortCtrlRef = useRef(null);
+
+  // Helper to safely extract string error messages
+  function extractErrorText(err, defaultMsg) {
+    if (!err) return defaultMsg;
+    if (typeof err === 'string') return err;
+    const d = err.detail !== undefined ? err.detail : err;
+    if (typeof d === 'string') return d;
+    if (Array.isArray(d)) {
+      return d.map(item => (typeof item === 'object' ? (item.msg || JSON.stringify(item)) : String(item))).join('; ');
+    }
+    if (typeof d === 'object') {
+      return d.msg || d.message || JSON.stringify(d);
+    }
+    return String(d);
+  }
 
   // Load existing mapping and workspace artifacts
   useEffect(() => {
@@ -94,15 +120,6 @@ export default function TableLogConfigPage({
             }
           }
         }
-
-        // If no saved mapping, default artifact selection if available
-        if (artList.length > 0) {
-          const firstArt = artList[0];
-          setSelectedArtifactId(firstArt.id);
-          if (firstArt.serverFqdn && firstArt.databaseName) {
-            await fetchTables(firstArt.serverFqdn, firstArt.databaseName);
-          }
-        }
       } catch (err) {
         console.error("Error loading config:", err);
         setStatusMsg({ type: 'error', text: 'Failed to load workspace data sources.' });
@@ -115,13 +132,29 @@ export default function TableLogConfigPage({
   }, [workspaceId]);
 
   const fetchTables = async (serverFqdn, databaseName, preBH = '', preBR = '', preSL = '') => {
+    if (abortCtrlRef.current) {
+      abortCtrlRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    abortCtrlRef.current = abortCtrl;
+    const currentReqId = ++activeReqIdRef.current;
+
     setIsLoadingTables(true);
+    setStatusMsg(null);
+    setAvailableTables([]);
+
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/tables`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverFqdn, databaseName })
+        body: JSON.stringify({ serverFqdn, databaseName }),
+        signal: abortCtrl.signal
       });
+
+      if (currentReqId !== activeReqIdRef.current) {
+        return; // Superseded by a newer selection
+      }
+
       if (res.ok) {
         const json = await res.json();
         const tbls = json.tables || [];
@@ -142,16 +175,27 @@ export default function TableLogConfigPage({
           const [s, t] = preSL.split('.');
           fetchCols(serverFqdn, databaseName, s, t, setSilverCols);
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setStatusMsg({ type: 'error', text: extractErrorText(errJson, 'Could not connect to SQL Endpoint to fetch tables.') });
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
+      if (currentReqId !== activeReqIdRef.current) return;
       console.error("Failed to fetch tables:", e);
       setStatusMsg({ type: 'error', text: 'Could not connect to SQL Endpoint to fetch tables.' });
     } finally {
-      setIsLoadingTables(false);
+      if (currentReqId === activeReqIdRef.current) {
+        setIsLoadingTables(false);
+      }
     }
   };
 
   const fetchCols = async (serverFqdn, databaseName, schemaName, tableName, setColState) => {
+    if (!serverFqdn || !databaseName || !schemaName || !tableName) {
+      setColState([]);
+      return;
+    }
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/columns`, {
         method: 'POST',
@@ -161,25 +205,31 @@ export default function TableLogConfigPage({
       if (res.ok) {
         const json = await res.json();
         setColState(json.columns || []);
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setStatusMsg({ type: 'error', text: extractErrorText(errJson, `Could not fetch columns for ${schemaName}.${tableName}.`) });
       }
     } catch (e) {
       console.error(`Failed to fetch columns for ${schemaName}.${tableName}:`, e);
+      setStatusMsg({ type: 'error', text: `Failed to fetch columns for ${schemaName}.${tableName}.` });
     }
   };
 
   const handleArtifactChange = (artId) => {
     setSelectedArtifactId(artId);
+    setAvailableTables([]);
+    setBatchHeaderTable('');
+    setBronzeTable('');
+    setSilverTable('');
+    setBatchHeaderCols([]);
+    setBronzeCols([]);
+    setSilverCols([]);
+    setBatchHeaderMapping({});
+    setBronzeMapping({});
+    setSilverMapping({});
+    setStatusMsg(null);
     const art = artifacts.find(a => a.id === artId);
     if (art && art.serverFqdn && art.databaseName) {
-      setBatchHeaderTable('');
-      setBronzeTable('');
-      setSilverTable('');
-      setBatchHeaderCols([]);
-      setBronzeCols([]);
-      setSilverCols([]);
-      setBatchHeaderMapping({});
-      setBronzeMapping({});
-      setSilverMapping({});
       fetchTables(art.serverFqdn, art.databaseName);
     }
   };
@@ -199,6 +249,104 @@ export default function TableLogConfigPage({
       setSilverTable(fullTableName);
       fetchCols(art.serverFqdn, art.databaseName, s, t, setSilverCols);
     }
+  };
+
+  // Smart Auto-Map helper function
+  const handleAutoMap = () => {
+    let mappedCount = 0;
+
+    // Helper matcher
+    const matchCol = (cols, candidates) => {
+      for (const cand of candidates) {
+        const normCand = cand.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const found = cols.find(c => c.name.toLowerCase().replace(/[^a-z0-9]/g, '') === normCand);
+        if (found) return found.name;
+      }
+      return '';
+    };
+
+    // Auto-map Batch Header
+    if (batchHeaderCols.length > 0) {
+      const newBH = { ...batchHeaderMapping };
+      const bhCandidates = {
+        pipeline_run_id_col: ['pipelinerunid', 'runid', 'pipeline_run_id', 'fabricrunid'],
+        batch_id_col: ['batchid', 'batch_id', 'id', 'batchpk'],
+        pipeline_name_col: ['pipelinename', 'pipeline_name', 'name', 'pipelinedisplayname'],
+        status_col: ['status', 'batchstatus', 'state', 'executionstatus'],
+        start_time_col: ['starttime', 'start_time', 'executionstarttime', 'batchstarttime'],
+        duration_col: ['duration', 'durationms', 'durationseconds', 'durationminutes'],
+        error_message_col: ['errormessage', 'error_message', 'error', 'errordescription']
+      };
+      Object.entries(bhCandidates).forEach(([field, cands]) => {
+        if (!newBH[field]) {
+          const matched = matchCol(batchHeaderCols, cands);
+          if (matched) {
+            newBH[field] = matched;
+            mappedCount++;
+          }
+        }
+      });
+      setBatchHeaderMapping(newBH);
+    }
+
+    // Auto-map Bronze
+    if (bronzeCols.length > 0) {
+      const newBR = { ...bronzeMapping };
+      const brCandidates = {
+        batch_id_col: ['batchid', 'batch_id', 'id'],
+        table_name_col: ['tablename', 'table_name', 'targettable', 'schematable'],
+        schema_name_col: ['schemaname', 'schema_name', 'targetschema'],
+        rows_processed_col: ['rowsprocessed', 'rows_processed', 'rowcount', 'ingestedrows', 'rowsingested'],
+        status_col: ['status', 'ingestionstatus', 'state'],
+        start_time_col: ['starttime', 'start_time', 'loadtime'],
+        end_time_col: ['endtime', 'end_time'],
+        duration_col: ['duration', 'durationseconds', 'durationms'],
+        error_message_col: ['errormessage', 'error_message', 'error']
+      };
+      Object.entries(brCandidates).forEach(([field, cands]) => {
+        if (!newBR[field]) {
+          const matched = matchCol(bronzeCols, cands);
+          if (matched) {
+            newBR[field] = matched;
+            mappedCount++;
+          }
+        }
+      });
+      setBronzeMapping(newBR);
+    }
+
+    // Auto-map Silver
+    if (silverCols.length > 0) {
+      const newSL = { ...silverMapping };
+      const slCandidates = {
+        batch_id_col: ['batchid', 'batch_id', 'id'],
+        table_name_col: ['tablename', 'table_name', 'targettable'],
+        schema_name_col: ['schemaname', 'schema_name', 'targetschema'],
+        rows_processed_col: ['rowsprocessed', 'rows_processed', 'rowcount', 'insertedrows', 'refinedrows'],
+        status_col: ['status', 'processingstatus', 'state'],
+        start_time_col: ['starttime', 'start_time'],
+        end_time_col: ['endtime', 'end_time'],
+        duration_col: ['duration', 'durationseconds', 'durationms'],
+        error_message_col: ['errormessage', 'error_message', 'error']
+      };
+      Object.entries(slCandidates).forEach(([field, cands]) => {
+        if (!newSL[field]) {
+          const matched = matchCol(silverCols, cands);
+          if (matched) {
+            newSL[field] = matched;
+            mappedCount++;
+          }
+        }
+      });
+      setSilverMapping(newSL);
+    }
+
+    setStatusMsg({
+      type: 'success',
+      text: mappedCount > 0 
+        ? `Auto-map matched and assigned ${mappedCount} columns successfully!`
+        : 'Auto-map ran. All identifiable columns were already mapped.'
+    });
   };
 
   const handleSave = async () => {
@@ -222,15 +370,29 @@ export default function TableLogConfigPage({
       artifact_type: art.type,
       server_fqdn: art.serverFqdn,
       database_name: art.databaseName,
-      batch_header_schema: bhSchema || null,
-      batch_header_table: bhTable || null,
-      bronze_schema: brSchema || null,
-      bronze_table: brTable || null,
-      silver_schema: slSchema || null,
-      silver_table: slTable || null,
+      batch_header_schema: bhSchema || '',
+      batch_header_table: bhTable || '',
+      bronze_schema: brSchema || '',
+      bronze_table: brTable || '',
+      silver_schema: slSchema || '',
+      silver_table: slTable || '',
       batch_header_mapping: batchHeaderMapping,
       bronze_mapping: bronzeMapping,
-      silver_mapping: silverMapping
+      silver_mapping: silverMapping,
+      artifactId: art.id,
+      artifactName: art.displayName,
+      artifactType: art.type,
+      serverFqdn: art.serverFqdn,
+      databaseName: art.databaseName,
+      batchHeaderSchema: bhSchema || '',
+      batchHeaderTable: bhTable || '',
+      bronzeSchema: brSchema || '',
+      bronzeTable: brTable || '',
+      silverSchema: slSchema || '',
+      silverTable: slTable || '',
+      batchHeaderMapping: batchHeaderMapping,
+      bronzeMapping: bronzeMapping,
+      silverMapping: silverMapping
     };
 
     try {
@@ -244,7 +406,7 @@ export default function TableLogConfigPage({
         if (onSaved) onSaved();
       } else {
         const err = await res.json().catch(() => ({}));
-        setStatusMsg({ type: 'error', text: err.detail || 'Failed to save mapping.' });
+        setStatusMsg({ type: 'error', text: extractErrorText(err, 'Failed to save mapping.') });
       }
     } catch (e) {
       console.error("Save error:", e);
@@ -283,207 +445,143 @@ export default function TableLogConfigPage({
   const currentArtifact = artifacts.find(a => a.id === selectedArtifactId);
 
   // Stepper completion checks
-  const isStep1Complete = !!selectedArtifactId && !!(batchHeaderTable || bronzeTable || silverTable);
-  const isStep2Complete = !!batchHeaderTable && Object.keys(batchHeaderMapping).length > 0;
-  const isStep3Complete = !!bronzeTable && Object.keys(bronzeMapping).length > 0;
-  const isStep4Complete = !!silverTable && Object.keys(silverMapping).length > 0;
+  const isStep1Complete = !!selectedArtifactId;
+  const isStep2Complete = !!(batchHeaderTable || bronzeTable || silverTable);
+  const isStep3Complete = Object.keys(batchHeaderMapping).length > 0 || Object.keys(bronzeMapping).length > 0;
+  const isStep4Complete = isStep1Complete && isStep2Complete;
 
-  const completedStepsCount = [isStep1Complete, isStep2Complete, isStep3Complete, isStep4Complete].filter(Boolean).length;
-  const progressPercent = Math.round((completedStepsCount / 4) * 100);
-
+  // Milestone definition matching Microsoft Fabric UI Kit Wizard
   const steps = [
     {
       number: 1,
       id: 'source',
-      title: 'Source & Data Artifact',
-      subtitle: 'Select Lakehouse / Warehouse & log tables',
+      title: 'Choose data source',
+      subtitle: 'Select Lakehouse or Warehouse',
       isCompleted: isStep1Complete,
       icon: Database
     },
     {
       number: 2,
-      id: 'batch_header',
-      title: 'Batch Header Mapping',
-      subtitle: 'Map Run ID, Batch ID, status & duration',
+      id: 'tables',
+      title: 'Choose log tables',
+      subtitle: 'Select catalog log tables',
       isCompleted: isStep2Complete,
       icon: TableProperties
     },
     {
       number: 3,
-      id: 'bronze',
-      title: 'Bronze Layer Mapping',
-      subtitle: 'Map Bronze table ingestion audit fields',
+      id: 'mapping',
+      title: 'Map audit columns',
+      subtitle: 'Map schema fields & metrics',
       isCompleted: isStep3Complete,
       icon: Layers
     },
     {
       number: 4,
-      id: 'silver',
-      title: 'Silver Layer Mapping',
-      subtitle: 'Map Silver refinement audit fields',
+      id: 'review',
+      title: 'Review and Create',
+      subtitle: 'Verify & apply to workspace',
       isCompleted: isStep4Complete,
-      icon: FileSpreadsheet
+      icon: ShieldCheck
     }
   ];
 
+  // Filtered artifacts
+  const filteredArtifacts = artifacts.filter(art => {
+    const matchesSearch = !sourceSearch || 
+      art.displayName?.toLowerCase().includes(sourceSearch.toLowerCase()) ||
+      art.databaseName?.toLowerCase().includes(sourceSearch.toLowerCase()) ||
+      art.serverFqdn?.toLowerCase().includes(sourceSearch.toLowerCase());
+    
+    if (sourceTypeFilter === 'WAREHOUSE') {
+      return matchesSearch && art.type?.toLowerCase().includes('warehouse');
+    }
+    if (sourceTypeFilter === 'LAKEHOUSE') {
+      return matchesSearch && art.type?.toLowerCase().includes('lakehouse');
+    }
+    return matchesSearch;
+  });
+
+  const totalMappedColumns = 
+    Object.keys(batchHeaderMapping).filter(k => batchHeaderMapping[k]).length +
+    Object.keys(bronzeMapping).filter(k => bronzeMapping[k]).length +
+    Object.keys(silverMapping).filter(k => silverMapping[k]).length;
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#faf9f8] text-[#242424] select-none">
-      {/* Top Breadcrumb & Page Title Bar */}
-      <div className="bg-[#ffffff] border-b border-[#edebe9] px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-        <div className="space-y-1 min-w-0">
-          <nav className="flex items-center gap-1.5 text-xs text-[#605e5c]">
-            <button 
-              onClick={onBackToMonitoring}
-              className="hover:text-[#0f6cbd] flex items-center gap-1 transition"
-            >
-              <span>Workspaces</span>
-            </button>
-            <ChevronRight className="w-3.5 h-3.5 text-[#a19f9d]" />
-            <span className="text-[#323130] font-medium truncate max-w-[200px]">
-              {workspaceName || 'Current Workspace'}
-            </span>
-            <ChevronRight className="w-3.5 h-3.5 text-[#a19f9d]" />
-            <button 
-              onClick={onBackToMonitoring}
-              className="hover:text-[#0f6cbd] transition"
-            >
-              Monitoring hub
-            </button>
-            <ChevronRight className="w-3.5 h-3.5 text-[#a19f9d]" />
-            <span className="text-[#242424] font-semibold">Table Logging Configuration</span>
-          </nav>
+    <div className="flex-1 flex flex-col min-h-0 w-full bg-white text-[#242424] font-sans select-none overflow-hidden">
 
-          <div className="flex items-center gap-2.5 pt-0.5">
-            <button
-              onClick={onBackToMonitoring}
-              title="Return to Monitoring hub"
-              className="p-1 rounded text-[#605e5c] hover:text-[#242424] hover:bg-[#f3f2f1] transition border border-transparent hover:border-[#edebe9]"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-            <div>
-              <h1 className="text-lg font-bold text-[#242424] tracking-tight flex items-center gap-2">
-                Lakehouse / Warehouse & Dynamic Column Mapping
-                <span className="px-2 py-0.5 rounded text-[11px] font-normal bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]">
-                  Fabric SQL Endpoint
-                </span>
-              </h1>
-              <p className="text-xs text-[#605e5c]">
-                Connect dynamically to your Microsoft Fabric data items to query ETL batch execution logs and layer ingestion metrics.
-              </p>
-            </div>
-          </div>
+      {/* Full-Page Wizard Title Bar */}
+      <div className="border-b border-[#edebe9] px-8 py-3.5 flex items-center justify-between bg-white shrink-0">
+        <div>
+          <span className="text-xs font-semibold text-[#616161] tracking-wide block">
+            Table Catalog Configuration
+          </span>
+          <h1 className="text-xl font-semibold text-[#242424] tracking-tight mt-0.5">
+            {steps[activeStep - 1]?.title}
+          </h1>
         </div>
 
-        {/* Header Actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={onBackToMonitoring}
-            className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#242424] text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Monitoring Hub</span>
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="px-4 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>{isSaving ? "Saving..." : "Save Mapping"}</span>
-          </button>
-        </div>
+        <button
+          onClick={onBackToMonitoring}
+          title="Close and return to Monitoring hub"
+          className="p-1.5 rounded hover:bg-[#f5f5f5] text-[#616161] hover:text-[#242424] transition"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
-      {/* Main 2-Column Experience */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* LEFT COLUMN: Vertical Stepper Navigation Rail */}
-        <aside className="w-72 lg:w-80 border-r border-[#edebe9] bg-[#ffffff] flex flex-col shrink-0 overflow-y-auto">
-          {/* Stepper Header with Progress Meter */}
-          <div className="p-5 border-b border-[#edebe9] space-y-2.5 bg-[#faf9f8]">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-[#242424] uppercase tracking-wider">Setup Progress</span>
-              <span className="text-xs font-bold text-[#0f6cbd]">{progressPercent}%</span>
-            </div>
-            
-            {/* Fluent Progress Bar */}
-            <div className="w-full bg-[#edebe9] h-1.5 rounded-full overflow-hidden">
-              <div 
-                className="bg-[#0f6cbd] h-full rounded-full transition-all duration-300"
-                style={{ width: `${Math.max( progressPercent, 5)}%` }}
-              />
-            </div>
-            
-            <p className="text-[11px] text-[#605e5c]">
-              {completedStepsCount} of 4 steps completed
-            </p>
-          </div>
-
-          {/* Vertical Stepper Timeline */}
-          <nav className="p-4 flex-1 space-y-1">
+      {/* Full-Page Wizard Body: Left Stepper Rail + Right Content */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* LEFT RAIL: Microsoft Fabric Vertical Stepper */}
+        <aside className="w-64 lg:w-72 bg-[#f5f5f5] border-r border-[#edebe9] p-6 shrink-0 flex flex-col overflow-y-auto">
+          {/* Stepper Timeline */}
+          <nav className="space-y-6">
             {steps.map((step, idx) => {
               const isActive = activeStep === step.number;
               const isCompleted = step.isCompleted;
               const isLast = idx === steps.length - 1;
-              const StepIcon = step.icon;
 
               return (
                 <div key={step.id} className="relative">
                   {/* Vertical Connecting Line */}
                   {!isLast && (
                     <div 
-                      className={`absolute left-[18px] top-9 bottom-[-10px] w-0.5 transition-colors duration-200 ${
-                        isCompleted ? 'bg-[#107c41]' : isActive ? 'bg-[#0f6cbd]/40' : 'bg-[#edebe9]'
+                      className={`absolute left-[9px] top-6 bottom-[-24px] w-[2px] transition-colors duration-200 ${
+                        isCompleted ? 'bg-[#117865]' : 'bg-[#d1d1d1]'
                       }`}
                       style={{ zIndex: 0 }}
                     />
                   )}
 
-                  {/* Step Item Card / Button */}
+                  {/* Step Row Item */}
                   <button
                     type="button"
                     onClick={() => setActiveStep(step.number)}
-                    className={`relative z-10 w-full text-left p-3 rounded transition-all flex items-start gap-3 group ${
-                      isActive 
-                        ? 'bg-[#eff6fc] border border-[#c7e0f4] shadow-sm'
-                        : 'hover:bg-[#f3f2f1] border border-transparent'
-                    }`}
+                    className="relative z-10 w-full text-left flex items-start gap-3 group focus:outline-none"
                   >
-                    {/* Node Circle */}
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold transition-all ${
-                      isCompleted
-                        ? 'bg-[#dff6dd] text-[#107c41] border-2 border-[#107c41]'
-                        : isActive
-                        ? 'bg-[#0f6cbd] text-white ring-4 ring-[#eff6fc] shadow-sm'
-                        : 'bg-[#ffffff] text-[#605e5c] border-2 border-[#d1d1d1] group-hover:border-[#0f6cbd]'
-                    }`}>
-                      {isCompleted ? (
-                        <Check className="w-4 h-4 stroke-[2.5]" />
+                    {/* Status Icon Node */}
+                    <div className="shrink-0 mt-0.5">
+                      {isActive ? (
+                        <div className="w-[20px] h-[20px] rounded-full bg-[#117865] flex items-center justify-center shadow-xs">
+                          <div className="w-[7px] h-[7px] rounded-full bg-white" />
+                        </div>
+                      ) : isCompleted ? (
+                        <div className="w-[20px] h-[20px] rounded-full bg-[#117865] flex items-center justify-center text-white shadow-xs">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                        </div>
                       ) : (
-                        <span>{step.number}</span>
+                        <div className="w-[20px] h-[20px] rounded-full bg-white border-2 border-[#d1d1d1] group-hover:border-[#117865] transition-colors" />
                       )}
                     </div>
 
                     {/* Step Details */}
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <h3 className={`text-xs font-semibold truncate ${
-                          isActive ? 'text-[#0f6cbd]' : 'text-[#242424]'
-                        }`}>
-                          {step.title}
-                        </h3>
-                        {isCompleted && (
-                          <span className="text-[10px] text-[#107c41] font-medium bg-[#dff6dd] px-1.5 py-0.2 rounded shrink-0">
-                            Ready
-                          </span>
-                        )}
-                        {!isCompleted && isActive && (
-                          <span className="text-[10px] text-[#0f6cbd] font-medium bg-[#eff6fc] px-1.5 py-0.2 rounded border border-[#c7e0f4] shrink-0">
-                            Active
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-[#605e5c] leading-tight mt-0.5 line-clamp-2">
+                      <h3 className={`text-xs font-semibold leading-tight ${
+                        isActive ? 'text-[#117865]' : 'text-[#242424]'
+                      }`}>
+                        {step.title}
+                      </h3>
+                      <p className="text-[11px] text-[#616161] leading-tight mt-1">
                         {step.subtitle}
                       </p>
                     </div>
@@ -492,648 +590,810 @@ export default function TableLogConfigPage({
               );
             })}
           </nav>
-
-          {/* Left Rail Summary Widget */}
-          <div className="p-4 border-t border-[#edebe9] bg-[#faf9f8] space-y-2 text-xs">
-            <span className="text-[10px] font-bold text-[#605e5c] uppercase tracking-wider block">
-              Active Configuration
-            </span>
-            <div className="space-y-1.5 text-[11px]">
-              <div className="flex items-center justify-between">
-                <span className="text-[#605e5c]">Data Item:</span>
-                <span className="font-semibold text-[#242424] truncate max-w-[140px]" title={currentArtifact?.displayName || "None"}>
-                  {currentArtifact?.displayName || "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#605e5c]">Batch Table:</span>
-                <span className="font-mono text-[#0f6cbd] truncate max-w-[140px]" title={batchHeaderTable || "None"}>
-                  {batchHeaderTable ? batchHeaderTable.split('.').pop() : "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#605e5c]">Bronze Table:</span>
-                <span className="font-mono text-[#d83b01] truncate max-w-[140px]" title={bronzeTable || "None"}>
-                  {bronzeTable ? bronzeTable.split('.').pop() : "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[#605e5c]">Silver Table:</span>
-                <span className="font-mono text-[#0078d4] truncate max-w-[140px]" title={silverTable || "None"}>
-                  {silverTable ? silverTable.split('.').pop() : "—"}
-                </span>
-              </div>
-            </div>
-          </div>
         </aside>
 
-        {/* RIGHT COLUMN: Active Step Workspace */}
-        <main className="flex-1 overflow-y-auto bg-[#faf9f8] p-6 space-y-4">
-          {/* Status Feedback Banner */}
-          {statusMsg && (
-            <div className={`p-3 rounded border flex items-center justify-between shadow-sm animate-in fade-in duration-150 ${
-              statusMsg.type === 'success'
-                ? 'bg-[#dff6dd] border-[#92c353] text-[#107c41]'
-                : 'bg-[#fde7e9] border-[#f19999] text-[#a80000]'
-            }`}>
-              <div className="flex items-center gap-2 text-xs font-medium">
-                {statusMsg.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                )}
-                <span>{statusMsg.text}</span>
-              </div>
-              <button
-                onClick={() => setStatusMsg(null)}
-                className="text-xs font-semibold hover:underline"
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {/* STEP 1: Source & Tables */}
-          {activeStep === 1 && (
-            <div className="space-y-4">
-              {/* Step Header Card */}
-              <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#0f6cbd]" />
-                  <h2 className="text-sm font-bold text-[#242424]">Step 1: Select Microsoft Fabric Artifact & Schemas</h2>
+        {/* RIGHT MAIN WORKSPACE: Active Step Content */}
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-white flex flex-col min-h-0">
+              {/* Status Feedback Toast */}
+              {statusMsg && (
+                <div className={`p-3.5 mb-6 rounded-md border flex items-center justify-between shadow-sm animate-in fade-in duration-150 ${
+                  statusMsg.type === 'success'
+                    ? 'bg-[#e3f7ef] border-[#117865]/30 text-[#117865]'
+                    : 'bg-[#fde7e9] border-[#f19999] text-[#a80000]'
+                }`}>
+                  <div className="flex items-center gap-2.5 text-xs font-medium">
+                    {statusMsg.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                    )}
+                    <span>{statusMsg.text}</span>
+                  </div>
+                  <button
+                    onClick={() => setStatusMsg(null)}
+                    className="text-xs font-semibold hover:underline"
+                  >
+                    Dismiss
+                  </button>
                 </div>
-                <p className="text-xs text-[#605e5c] leading-relaxed">
-                  Choose the Fabric Lakehouse or Warehouse containing your batch logging tables. The system connects dynamically to its SQL Endpoint to list available tables and inspect metadata columns.
-                </p>
-              </div>
+              )}
 
-              {/* Data Artifact Selection Grid */}
-              <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="font-semibold text-xs text-[#242424] flex items-center gap-2">
-                    <Database className="w-4 h-4 text-[#0f6cbd]" />
-                    Available Warehouses & Lakehouses in Workspace
-                  </label>
-                  {isLoadingArtifacts && (
-                    <span className="flex items-center gap-1.5 text-xs text-[#0f6cbd] animate-pulse">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Discovering Fabric artifacts...
-                    </span>
-                  )}
-                </div>
+              {/* =========================================================
+                  STEP 1: Choose Data Source (Warehouse / Lakehouse)
+                  ========================================================= */}
+              {activeStep === 1 && (
+                <div className="space-y-6 flex-1 flex flex-col">
+                  <div>
+                    <h2 className="text-sm font-semibold text-[#242424]">
+                      Choose from existing Microsoft Fabric sources
+                    </h2>
+                    <p className="text-xs text-[#616161] mt-0.5">
+                      Select the Fabric Warehouse or Lakehouse where your ETL batch logging tables reside.
+                    </p>
+                  </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {artifacts.length === 0 && !isLoadingArtifacts && (
-                    <div className="col-span-full p-6 text-center text-[#605e5c] bg-[#faf9f8] rounded border border-[#edebe9] text-xs">
-                      No Lakehouses or Warehouses found in this workspace. Ensure your Azure Service Principal has Read/Execute permissions on workspace SQL Endpoints.
+                  {/* Search and Filter Toolbar */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div className="relative w-full sm:w-80">
+                      <Search className="w-4 h-4 text-[#616161] absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Search Lakehouses and Warehouses..."
+                        value={sourceSearch}
+                        onChange={(e) => setSourceSearch(e.target.value)}
+                        className="w-full bg-[#fafafa] border border-[#d1d1d1] rounded-md pl-9 pr-3 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#117865] focus:bg-white transition"
+                      />
                     </div>
-                  )}
 
-                  {artifacts.map((art) => {
-                    const isSelected = art.id === selectedArtifactId;
-                    const isLakehouse = art.type?.toLowerCase().includes('lakehouse');
-
-                    return (
+                    <div className="flex items-center gap-1.5 self-end sm:self-auto text-xs">
                       <button
-                        key={art.id}
                         type="button"
-                        onClick={() => handleArtifactChange(art.id)}
-                        className={`p-3.5 rounded border text-left transition flex items-start gap-3 ${
-                          isSelected
-                            ? 'bg-[#eff6fc] border-[#0f6cbd] ring-2 ring-[#0f6cbd]/20 shadow-sm'
-                            : 'bg-[#ffffff] border-[#edebe9] hover:border-[#d1d1d1] hover:bg-[#faf9f8]'
+                        onClick={() => setSourceTypeFilter('ALL')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                          sourceTypeFilter === 'ALL'
+                            ? 'bg-[#117865] text-white shadow-xs'
+                            : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
                         }`}
                       >
-                        <div className={`p-2.5 rounded shrink-0 ${
-                          isLakehouse ? 'bg-[#fff4ce] text-[#8a660a]' : 'bg-[#eff6fc] text-[#0f6cbd]'
-                        }`}>
-                          <Database className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-semibold text-xs text-[#242424] truncate">
-                              {art.displayName}
-                            </span>
-                            <span className={`px-1.5 py-0.2 text-[9px] font-medium uppercase rounded ${
-                              isLakehouse ? 'bg-[#fff4ce] text-[#8a660a]' : 'bg-[#eff6fc] text-[#0f6cbd]'
-                            }`}>
-                              {art.type}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-[#605e5c] font-mono truncate mt-1">
-                            {art.serverFqdn || "Endpoint discovering..."}
-                          </p>
-                          <div className="flex items-center gap-2 text-[10px] text-[#797775] mt-1.5">
-                            <span>DB: {art.databaseName || art.displayName}</span>
-                            {isSelected && (
-                              <span className="text-[#107c41] font-semibold flex items-center gap-0.5 ml-auto">
-                                <Check className="w-3 h-3" /> Selected
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                        All ({artifacts.length})
                       </button>
-                    );
-                  })}
-                </div>
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => setSourceTypeFilter('WAREHOUSE')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                          sourceTypeFilter === 'WAREHOUSE'
+                            ? 'bg-[#117865] text-white shadow-xs'
+                            : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
+                        }`}
+                      >
+                        Warehouses ({artifacts.filter(a => a.type?.toLowerCase().includes('warehouse')).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSourceTypeFilter('LAKEHOUSE')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                          sourceTypeFilter === 'LAKEHOUSE'
+                            ? 'bg-[#117865] text-white shadow-xs'
+                            : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
+                        }`}
+                      >
+                        Lakehouses ({artifacts.filter(a => a.type?.toLowerCase().includes('lakehouse')).length})
+                      </button>
+                    </div>
+                  </div>
 
-              {/* Table Pickers */}
-              {selectedArtifactId && (
-                <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-4">
+                  {/* Sources Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 flex-1 content-start">
+                    {isLoadingArtifacts && (
+                      <div className="col-span-full p-12 text-center text-xs text-[#616161] flex flex-col items-center justify-center gap-2">
+                        <RefreshCw className="w-5 h-5 text-[#117865] animate-spin" />
+                        <span>Discovering Microsoft Fabric artifacts...</span>
+                      </div>
+                    )}
+
+                    {!isLoadingArtifacts && filteredArtifacts.length === 0 && (
+                      <div className="col-span-full p-12 text-center text-[#616161] bg-[#fafafa] rounded-lg border border-[#edebe9] text-xs">
+                        No artifacts matching filter. Ensure your Azure Service Principal has permissions on workspace SQL Endpoints.
+                      </div>
+                    )}
+
+                    {!isLoadingArtifacts && filteredArtifacts.map((art) => {
+                      const isSelected = art.id === selectedArtifactId;
+                      const isLakehouse = art.type?.toLowerCase().includes('lakehouse');
+
+                      return (
+                        <button
+                          key={art.id}
+                          type="button"
+                          onClick={() => handleArtifactChange(art.id)}
+                          className={`p-4 rounded-lg border text-left transition flex flex-col justify-between gap-3 relative ${
+                            isSelected
+                              ? 'bg-[#e3f7ef]/50 border-[#117865] ring-2 ring-[#117865]/20 shadow-xs'
+                              : 'bg-white border-[#edebe9] hover:border-[#d1d1d1] hover:bg-[#fafafa]'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`p-2.5 rounded-md shrink-0 ${
+                              isLakehouse ? 'bg-[#fff4ce] text-[#8a660a]' : 'bg-[#e3f7ef] text-[#117865]'
+                            }`}>
+                              <Database className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-semibold text-xs text-[#242424] truncate">
+                                  {art.displayName}
+                                </span>
+                              </div>
+                              <span className={`inline-block px-1.5 py-0.5 text-[9px] font-medium uppercase rounded mt-1 ${
+                                isLakehouse ? 'bg-[#fff4ce] text-[#8a660a]' : 'bg-[#e3f7ef] text-[#117865]'
+                              }`}>
+                                {art.type}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-[#edebe9] w-full text-[10px] text-[#616161] space-y-0.5">
+                            <div className="truncate font-mono" title={art.serverFqdn}>
+                              Endpoint: {art.serverFqdn || "Discovering..."}
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span>Database: {art.databaseName || art.displayName}</span>
+                              {isSelected && (
+                                <span className="text-[#117865] font-semibold flex items-center gap-0.5">
+                                  <Check className="w-3 h-3 stroke-[3]" /> Selected
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* =========================================================
+                  STEP 2: Choose Log Tables (Table Catalog)
+                  ========================================================= */}
+              {activeStep === 2 && (
+                <div className="space-y-6 flex-1 flex flex-col">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="font-semibold text-xs text-[#242424] flex items-center gap-2">
-                        <TableProperties className="w-4 h-4 text-[#0f6cbd]" />
-                        Map Log Tables from {currentArtifact?.displayName}
-                      </h3>
-                      <p className="text-[11px] text-[#605e5c]">
-                        Select which SQL tables in the artifact correspond to the Batch Header, Bronze, and Silver logs.
+                      <h2 className="text-sm font-semibold text-[#242424]">
+                        Select table catalog for {currentArtifact?.displayName || "selected artifact"}
+                      </h2>
+                      <p className="text-xs text-[#616161] mt-0.5">
+                        Assign which SQL tables in this artifact correspond to Batch Header, Bronze Ingestion, and Silver Refinement.
                       </p>
                     </div>
+
                     {isLoadingTables && (
-                      <span className="flex items-center gap-1.5 text-xs text-[#0f6cbd] animate-pulse">
+                      <span className="flex items-center gap-1.5 text-xs text-[#117865] animate-pulse">
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Querying SQL Endpoint tables...
                       </span>
                     )}
                   </div>
 
+                  {!isLoadingTables && availableTables.length === 0 && (
+                    <div className="p-4 rounded-lg bg-[#fff4ce] border border-[#fde896] text-[#8a660a] text-xs flex items-center gap-2.5">
+                      <Info className="w-4 h-4 shrink-0" />
+                      <span>
+                        No user tables or views were found in <strong>{currentArtifact?.displayName}</strong>. 
+                        Please ensure the artifact has tables created (or select an artifact containing batch metadata like <strong>WH_MetaData</strong>).
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 3 Role Selection Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Batch Header Table */}
-                    <div className="p-3.5 rounded border border-[#edebe9] bg-[#faf9f8] space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-xs text-[#242424]">1. Batch Header Table</span>
-                        <span className="text-[10px] text-[#0f6cbd] font-medium px-1.5 py-0.2 bg-[#eff6fc] rounded">Master</span>
-                      </div>
-                      <p className="text-[11px] text-[#605e5c]">Stores PipelineRunId, BatchId, PipelineName, and overall status.</p>
-                      <select
-                        value={batchHeaderTable}
-                        onChange={(e) => handleTableChange('batch_header', e.target.value)}
-                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
-                      >
-                        <option value="">-- Select Batch Header Table --</option>
-                        {availableTables.map(t => (
-                          <option key={`bh-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
-                        ))}
-                      </select>
-                      {batchHeaderTable && (
-                        <div className="text-[11px] text-[#107c41] font-mono flex items-center gap-1">
-                          <Check className="w-3 h-3" /> {batchHeaderCols.length} columns loaded
+                    <div className="p-4 rounded-lg border border-[#edebe9] bg-[#fafafa] space-y-3 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-xs text-[#242424]">1. Batch Header Log Table</span>
+                          <span className="text-[10px] text-[#117865] font-medium px-2 py-0.5 bg-[#e3f7ef] rounded">Master</span>
                         </div>
-                      )}
+                        <p className="text-[11px] text-[#616161] mt-1">
+                          Stores overall pipeline execution, Run ID, Batch ID, and total duration.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[11px] font-semibold text-[#616161] block">
+                          Table Selection:
+                        </label>
+                        <select
+                          value={batchHeaderTable}
+                          onChange={(e) => handleTableChange('batch_header', e.target.value)}
+                          className="w-full bg-white border border-[#d1d1d1] rounded-md px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#117865] font-mono cursor-pointer shadow-xs"
+                        >
+                          <option value="">-- Select Table --</option>
+                          {availableTables.map(t => (
+                            <option key={`bh-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
+                          ))}
+                        </select>
+
+                        {batchHeaderTable && (
+                          <div className="text-[11px] text-[#117865] font-medium flex items-center gap-1 mt-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> {batchHeaderCols.length} columns discovered
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Bronze Table */}
-                    <div className="p-3.5 rounded border border-[#edebe9] bg-[#faf9f8] space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-xs text-[#d83b01]">2. Bronze Log Table</span>
-                        <span className="text-[10px] text-[#d83b01] font-medium px-1.5 py-0.2 bg-[#fff4ce] rounded">Raw Load</span>
-                      </div>
-                      <p className="text-[11px] text-[#605e5c]">Stores BatchId, TableName, SchemaName, and raw row counts.</p>
-                      <select
-                        value={bronzeTable}
-                        onChange={(e) => handleTableChange('bronze', e.target.value)}
-                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
-                      >
-                        <option value="">-- Select Bronze Table --</option>
-                        {availableTables.map(t => (
-                          <option key={`br-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
-                        ))}
-                      </select>
-                      {bronzeTable && (
-                        <div className="text-[11px] text-[#107c41] font-mono flex items-center gap-1">
-                          <Check className="w-3 h-3" /> {bronzeCols.length} columns loaded
+                    {/* Bronze Log Table */}
+                    <div className="p-4 rounded-lg border border-[#edebe9] bg-[#fafafa] space-y-3 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-xs text-[#242424]">2. Bronze Layer Audit Table</span>
+                          <span className="text-[10px] text-[#8a660a] font-medium px-2 py-0.5 bg-[#fff4ce] rounded">Raw Layer</span>
                         </div>
-                      )}
+                        <p className="text-[11px] text-[#616161] mt-1">
+                          Stores raw extraction audit logs, ingested row counts, and status per table.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[11px] font-semibold text-[#616161] block">
+                          Table Selection:
+                        </label>
+                        <select
+                          value={bronzeTable}
+                          onChange={(e) => handleTableChange('bronze', e.target.value)}
+                          className="w-full bg-white border border-[#d1d1d1] rounded-md px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#117865] font-mono cursor-pointer shadow-xs"
+                        >
+                          <option value="">-- Select Table --</option>
+                          {availableTables.map(t => (
+                            <option key={`br-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
+                          ))}
+                        </select>
+
+                        {bronzeTable && (
+                          <div className="text-[11px] text-[#117865] font-medium flex items-center gap-1 mt-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> {bronzeCols.length} columns discovered
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Silver Table */}
-                    <div className="p-3.5 rounded border border-[#edebe9] bg-[#faf9f8] space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-xs text-[#0078d4]">3. Silver Log Table</span>
-                        <span className="text-[10px] text-[#0078d4] font-medium px-1.5 py-0.2 bg-[#eff6fc] rounded">Refined</span>
-                      </div>
-                      <p className="text-[11px] text-[#605e5c]">Stores BatchId, TableName, transformed rows, and durations.</p>
-                      <select
-                        value={silverTable}
-                        onChange={(e) => handleTableChange('silver', e.target.value)}
-                        className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] font-mono cursor-pointer"
-                      >
-                        <option value="">-- Select Silver Table --</option>
-                        {availableTables.map(t => (
-                          <option key={`sl-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
-                        ))}
-                      </select>
-                      {silverTable && (
-                        <div className="text-[11px] text-[#107c41] font-mono flex items-center gap-1">
-                          <Check className="w-3 h-3" /> {silverCols.length} columns loaded
+                    {/* Silver Log Table */}
+                    <div className="p-4 rounded-lg border border-[#edebe9] bg-[#fafafa] space-y-3 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-xs text-[#242424]">3. Silver Layer Audit Table</span>
+                          <span className="text-[10px] text-[#117865] font-medium px-2 py-0.5 bg-[#e3f7ef] rounded">Refined Layer</span>
                         </div>
-                      )}
+                        <p className="text-[11px] text-[#616161] mt-1">
+                          Stores transformation logs, refined row counts, and stage execution metrics.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[11px] font-semibold text-[#616161] block">
+                          Table Selection:
+                        </label>
+                        <select
+                          value={silverTable}
+                          onChange={(e) => handleTableChange('silver', e.target.value)}
+                          className="w-full bg-white border border-[#d1d1d1] rounded-md px-2.5 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#117865] font-mono cursor-pointer shadow-xs"
+                        >
+                          <option value="">-- Select Table --</option>
+                          {availableTables.map(t => (
+                            <option key={`sl-${t.fullName}`} value={t.fullName}>{t.fullName}</option>
+                          ))}
+                        </select>
+
+                        {silverTable && (
+                          <div className="text-[11px] text-[#117865] font-medium flex items-center gap-1 mt-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> {silverCols.length} columns discovered
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* STEP 2: Batch Header Mapping */}
-          {activeStep === 2 && (
-            <div className="space-y-4">
-              <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#0f6cbd]" />
-                    <h2 className="text-sm font-bold text-[#242424]">Step 2: Batch Header Column Mapping</h2>
-                  </div>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#c7e0f4]">
-                    Table: {batchHeaderTable || "None Selected"}
-                  </span>
-                </div>
-                <p className="text-xs text-[#605e5c]">
-                  Map each required semantic attribute to the column name in your database's batch header table.
-                </p>
-              </div>
+              {/* =========================================================
+                  STEP 3: Map Audit Columns
+                  ========================================================= */}
+              {activeStep === 3 && (
+                <div className="space-y-4 flex-1 flex flex-col min-h-0">
+                  <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#edebe9]">
+                    <div>
+                      <h2 className="text-sm font-semibold text-[#242424]">
+                        Map source database columns to standard audit attributes
+                      </h2>
+                      <p className="text-xs text-[#616161] mt-0.5">
+                        These mappings allow the Monitoring Hub to extract Run IDs, row counts, and status dynamically.
+                      </p>
+                    </div>
 
-              {!batchHeaderTable ? (
-                <div className="p-12 text-center bg-[#ffffff] rounded border border-[#edebe9] space-y-3">
-                  <AlertCircle className="w-8 h-8 text-[#8a660a] mx-auto" />
-                  <p className="text-xs text-[#605e5c]">
-                    Please select a <strong>Batch Header Table</strong> in Step 1 before mapping columns.
-                  </p>
-                  <button
-                    onClick={() => setActiveStep(1)}
-                    className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition"
-                  >
-                    Go to Step 1
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-[#edebe9]">
-                    <span className="text-xs font-semibold text-[#242424] uppercase tracking-wider">Semantic Field</span>
-                    <span className="text-xs font-semibold text-[#242424] uppercase tracking-wider">Database Column Mapping</span>
+                    <button
+                      type="button"
+                      onClick={handleAutoMap}
+                      className="px-3.5 py-1.5 rounded-md bg-[#e3f7ef] hover:bg-[#117865] text-[#117865] hover:text-white border border-[#117865]/30 text-xs font-semibold transition flex items-center gap-1.5 self-start sm:self-auto shadow-xs"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Auto-Map Matching Columns</span>
+                    </button>
                   </div>
 
-                  <div className="space-y-2.5">
-                    <MappingRow
-                      label="Pipeline Run ID"
-                      description="Links Fabric pipeline run ID to this batch record for telemetry correlation."
-                      currentVal={batchHeaderMapping.pipeline_run_id_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, pipeline_run_id_col: val }))}
-                    />
-                    <MappingRow
-                      label="Batch ID (Primary Key)"
-                      description="Unique batch run identifier. Joins batch summary with Bronze & Silver log tables."
-                      currentVal={batchHeaderMapping.batch_id_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, batch_id_col: val }))}
-                    />
-                    <MappingRow
-                      label="Pipeline Name"
-                      description="Pipeline name column. Displayed in the header and in the batch switcher dropdown."
-                      currentVal={batchHeaderMapping.pipeline_name_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, pipeline_name_col: val }))}
-                    />
-                    <MappingRow
-                      label="Batch Execution Status"
-                      description="Batch status (e.g. Success, Failure, In Progress). Displayed in header pill."
-                      currentVal={batchHeaderMapping.status_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, status_col: val }))}
-                    />
-                    <MappingRow
-                      label="Start Time"
-                      description="Batch execution start timestamp."
-                      currentVal={batchHeaderMapping.start_time_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, start_time_col: val }))}
-                    />
-                    <MappingRow
-                      label="Duration"
-                      description="Overall batch execution duration in minutes or seconds."
-                      currentVal={batchHeaderMapping.duration_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, duration_col: val }))}
-                    />
-                    <MappingRow
-                      label="Error Message"
-                      description="Overall batch execution error description if failed."
-                      currentVal={batchHeaderMapping.error_message_col}
-                      columns={batchHeaderCols}
-                      onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, error_message_col: val }))}
-                    />
+                  {/* Sub Tabs: Batch Header / Bronze / Silver */}
+                  <div className="shrink-0 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMappingSubTab('batch_header')}
+                      className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                        mappingSubTab === 'batch_header'
+                          ? 'bg-[#117865] text-white shadow-xs'
+                          : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
+                      }`}
+                    >
+                      <TableProperties className="w-3.5 h-3.5" />
+                      <span>Batch Header ({Object.keys(batchHeaderMapping).filter(k => batchHeaderMapping[k]).length}/7)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMappingSubTab('bronze')}
+                      className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                        mappingSubTab === 'bronze'
+                          ? 'bg-[#117865] text-white shadow-xs'
+                          : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Bronze Layer ({Object.keys(bronzeMapping).filter(k => bronzeMapping[k]).length}/9)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMappingSubTab('silver')}
+                      className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition flex items-center gap-1.5 ${
+                        mappingSubTab === 'silver'
+                          ? 'bg-[#117865] text-white shadow-xs'
+                          : 'bg-[#f5f5f5] text-[#616161] hover:bg-[#edebe9]'
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Silver Layer ({Object.keys(silverMapping).filter(k => silverMapping[k]).length}/9)</span>
+                    </button>
+                  </div>
+
+                  {/* Mapping Table for Selected Sub Tab */}
+                  <div className="bg-white border border-[#edebe9] rounded-lg p-4 sm:p-5 shadow-xs flex-1 min-h-0 flex flex-col overflow-hidden">
+                    {mappingSubTab === 'batch_header' && (
+                      <div className="flex-1 min-h-0 flex flex-col">
+                        <div className="shrink-0 text-xs font-semibold text-[#616161] pb-2.5 border-b border-[#edebe9] mb-2 flex items-center justify-between px-1">
+                          <span>Target Attribute</span>
+                          <span>Source Column ({batchHeaderTable || "No Table Selected"})</span>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-2">
+                          <MappingRow
+                            label="Pipeline Run ID (Telemetry correlation)"
+                            description="Unique Fabric pipeline run ID mapped to this batch header record."
+                            currentVal={batchHeaderMapping.pipeline_run_id_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, pipeline_run_id_col: val }))}
+                          />
+                          <MappingRow
+                            label="Batch ID (Primary Key)"
+                            description="Unique batch identifier that joins summary with Bronze & Silver log rows."
+                            currentVal={batchHeaderMapping.batch_id_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, batch_id_col: val }))}
+                          />
+                          <MappingRow
+                            label="Pipeline Name"
+                            description="Human-readable pipeline name displayed in header and batch switcher."
+                            currentVal={batchHeaderMapping.pipeline_name_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, pipeline_name_col: val }))}
+                          />
+                          <MappingRow
+                            label="Batch Execution Status"
+                            description="Execution status column (Success, Failure, In Progress)."
+                            currentVal={batchHeaderMapping.status_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, status_col: val }))}
+                          />
+                          <MappingRow
+                            label="Start Time"
+                            description="Batch execution start timestamp."
+                            currentVal={batchHeaderMapping.start_time_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, start_time_col: val }))}
+                          />
+                          <MappingRow
+                            label="Duration"
+                            description="Overall batch execution duration in minutes or seconds."
+                            currentVal={batchHeaderMapping.duration_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, duration_col: val }))}
+                          />
+                          <MappingRow
+                            label="Error Message"
+                            description="Execution error message if the batch failed."
+                            currentVal={batchHeaderMapping.error_message_col}
+                            columns={batchHeaderCols}
+                            onChange={(val) => setBatchHeaderMapping(prev => ({ ...prev, error_message_col: val }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {mappingSubTab === 'bronze' && (
+                      <div className="flex-1 min-h-0 flex flex-col">
+                        <div className="shrink-0 text-xs font-semibold text-[#616161] pb-2.5 border-b border-[#edebe9] mb-2 flex items-center justify-between px-1">
+                          <span>Target Attribute</span>
+                          <span>Source Column ({bronzeTable || "No Table Selected"})</span>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-2">
+                          <MappingRow
+                            label="Batch ID (Foreign Key)"
+                            description="Foreign key column matching the Batch Header BatchId."
+                            currentVal={bronzeMapping.batch_id_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, batch_id_col: val }))}
+                          />
+                          <MappingRow
+                            label="Table Name"
+                            description="Name of the ingested Bronze table."
+                            currentVal={bronzeMapping.table_name_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, table_name_col: val }))}
+                          />
+                          <MappingRow
+                            label="Schema Name"
+                            description="Schema of the ingested Bronze table (e.g. dbo, raw, bronze)."
+                            currentVal={bronzeMapping.schema_name_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, schema_name_col: val }))}
+                          />
+                          <MappingRow
+                            label="Rows Ingested / Processed"
+                            description="Number of rows loaded into Bronze layer."
+                            currentVal={bronzeMapping.rows_processed_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, rows_processed_col: val }))}
+                          />
+                          <MappingRow
+                            label="Status"
+                            description="Ingestion status for the specific table."
+                            currentVal={bronzeMapping.status_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, status_col: val }))}
+                          />
+                          <MappingRow
+                            label="Start Time"
+                            description="Extraction start timestamp."
+                            currentVal={bronzeMapping.start_time_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, start_time_col: val }))}
+                          />
+                          <MappingRow
+                            label="End Time"
+                            description="Extraction completion timestamp."
+                            currentVal={bronzeMapping.end_time_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, end_time_col: val }))}
+                          />
+                          <MappingRow
+                            label="Duration"
+                            description="Table extraction duration in seconds or minutes."
+                            currentVal={bronzeMapping.duration_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, duration_col: val }))}
+                          />
+                          <MappingRow
+                            label="Error Message"
+                            description="Error description if extraction failed."
+                            currentVal={bronzeMapping.error_message_col}
+                            columns={bronzeCols}
+                            onChange={(val) => setBronzeMapping(prev => ({ ...prev, error_message_col: val }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {mappingSubTab === 'silver' && (
+                      <div className="flex-1 min-h-0 flex flex-col">
+                        <div className="shrink-0 text-xs font-semibold text-[#616161] pb-2.5 border-b border-[#edebe9] mb-2 flex items-center justify-between px-1">
+                          <span>Target Attribute</span>
+                          <span>Source Column ({silverTable || "No Table Selected"})</span>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 space-y-2">
+                          <MappingRow
+                            label="Batch ID (Foreign Key)"
+                            description="Foreign key column matching the Batch Header BatchId."
+                            currentVal={silverMapping.batch_id_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, batch_id_col: val }))}
+                          />
+                          <MappingRow
+                            label="Table Name"
+                            description="Name of the transformed Silver table."
+                            currentVal={silverMapping.table_name_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, table_name_col: val }))}
+                          />
+                          <MappingRow
+                            label="Schema Name"
+                            description="Database schema of the silver table (e.g. dbo, silver)."
+                            currentVal={silverMapping.schema_name_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, schema_name_col: val }))}
+                          />
+                          <MappingRow
+                            label="Rows Refined / Processed"
+                            description="Transformed row count loaded into Silver."
+                            currentVal={silverMapping.rows_processed_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, rows_processed_col: val }))}
+                          />
+                          <MappingRow
+                            label="Status"
+                            description="Silver refinement status."
+                            currentVal={silverMapping.status_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, status_col: val }))}
+                          />
+                          <MappingRow
+                            label="Start Time"
+                            description="Refinement start timestamp."
+                            currentVal={silverMapping.start_time_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, start_time_col: val }))}
+                          />
+                          <MappingRow
+                            label="End Time"
+                            description="Refinement end timestamp."
+                            currentVal={silverMapping.end_time_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, end_time_col: val }))}
+                          />
+                          <MappingRow
+                            label="Duration"
+                            description="Refinement duration in seconds or minutes."
+                            currentVal={silverMapping.duration_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, duration_col: val }))}
+                          />
+                          <MappingRow
+                            label="Error Message"
+                            description="Error description if silver transformation failed."
+                            currentVal={silverMapping.error_message_col}
+                            columns={silverCols}
+                            onChange={(val) => setSilverMapping(prev => ({ ...prev, error_message_col: val }))}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* STEP 3: Bronze Layer Mapping */}
-          {activeStep === 3 && (
-            <div className="space-y-4">
-              <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#d83b01]" />
-                    <h2 className="text-sm font-bold text-[#242424]">Step 3: Bronze Layer Ingestion Column Mapping</h2>
+              {/* =========================================================
+                  STEP 4: Review and Create
+                  ========================================================= */}
+              {activeStep === 4 && (
+                <div className="space-y-6 flex-1 flex flex-col">
+                  <div>
+                    <h2 className="text-sm font-semibold text-[#242424]">
+                      Review configuration summary
+                    </h2>
+                    <p className="text-xs text-[#616161] mt-0.5">
+                      Verify your Microsoft Fabric data item, catalog tables, and column audit mappings before applying.
+                    </p>
                   </div>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#fff4ce] text-[#8a660a] border border-[#fed9cc]">
-                    Table: {bronzeTable || "None Selected"}
-                  </span>
-                </div>
-                <p className="text-xs text-[#605e5c]">
-                  Configure column mappings for your raw ingestion layer log table.
-                </p>
-              </div>
 
-              {!bronzeTable ? (
-                <div className="p-12 text-center bg-[#ffffff] rounded border border-[#edebe9] space-y-3">
-                  <AlertCircle className="w-8 h-8 text-[#8a660a] mx-auto" />
-                  <p className="text-xs text-[#605e5c]">
-                    Please select a <strong>Bronze Log Table</strong> in Step 1 before mapping columns.
-                  </p>
-                  <button
-                    onClick={() => setActiveStep(1)}
-                    className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition"
-                  >
-                    Go to Step 1
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-3">
-                  <div className="p-2.5 rounded bg-[#eff6fc] border border-[#c7e0f4] text-[#004e8c] text-xs flex items-start gap-2">
-                    <Info className="w-3.5 h-3.5 text-[#0f6cbd] shrink-0 mt-0.5" />
+                  {/* Summary Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Source Summary */}
+                    <div className="p-4 rounded-lg border border-[#edebe9] bg-[#fafafa] space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-[#117865]">
+                        <Database className="w-4 h-4" />
+                        <span>Data Source & SQL Endpoint</span>
+                      </div>
+                      <div className="text-xs space-y-1 pt-1 border-t border-[#edebe9]">
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Item Name:</span>
+                          <span className="font-semibold text-[#242424]">{currentArtifact?.displayName || "—"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Item Type:</span>
+                          <span className="font-medium text-[#242424]">{currentArtifact?.type || "—"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Database:</span>
+                          <span className="font-mono text-[#242424]">{currentArtifact?.databaseName || "—"}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tables Summary */}
+                    <div className="p-4 rounded-lg border border-[#edebe9] bg-[#fafafa] space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-[#117865]">
+                        <TableProperties className="w-4 h-4" />
+                        <span>Catalog Log Tables</span>
+                      </div>
+                      <div className="text-xs space-y-1 pt-1 border-t border-[#edebe9]">
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Batch Header:</span>
+                          <span className="font-mono text-[#242424]">{batchHeaderTable || "Not selected"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Bronze Layer:</span>
+                          <span className="font-mono text-[#242424]">{bronzeTable || "Not selected"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#616161]">Silver Layer:</span>
+                          <span className="font-mono text-[#242424]">{silverTable || "Not selected"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Readiness Checklist */}
+                  <div className="p-4 rounded-lg border border-[#edebe9] bg-white space-y-3 shadow-xs">
+                    <span className="text-xs font-semibold text-[#242424] block">
+                      Configuration Health Checklist
+                    </span>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        {isStep1Complete ? (
+                          <div className="w-4 h-4 rounded-full bg-[#117865] text-white flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border border-[#d1d1d1] shrink-0" />
+                        )}
+                        <span className={isStep1Complete ? 'text-[#242424] font-medium' : 'text-[#616161]'}>
+                          Fabric Warehouse / Lakehouse Selected & Connected
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isStep2Complete ? (
+                          <div className="w-4 h-4 rounded-full bg-[#117865] text-white flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border border-[#d1d1d1] shrink-0" />
+                        )}
+                        <span className={isStep2Complete ? 'text-[#242424] font-medium' : 'text-[#616161]'}>
+                          At least 1 log table selected in Table Catalog
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {batchHeaderMapping.pipeline_run_id_col ? (
+                          <div className="w-4 h-4 rounded-full bg-[#117865] text-white flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-[#fff4ce] text-[#8a660a] flex items-center justify-center shrink-0 text-[10px] font-bold">
+                            !
+                          </div>
+                        )}
+                        <span className={batchHeaderMapping.pipeline_run_id_col ? 'text-[#242424] font-medium' : 'text-[#8a660a]'}>
+                          Pipeline Run ID correlated for Monitoring Hub telemetry
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {totalMappedColumns > 0 ? (
+                          <div className="w-4 h-4 rounded-full bg-[#117865] text-white flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border border-[#d1d1d1] shrink-0" />
+                        )}
+                        <span className="text-[#242424] font-medium">
+                          {totalMappedColumns} audit attributes mapped across layers
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ready to apply banner */}
+                  <div className="p-3.5 rounded-lg bg-[#e3f7ef] border border-[#117865]/30 text-[#117865] text-xs flex items-center gap-2.5 mt-auto">
+                    <ShieldCheck className="w-5 h-5 shrink-0" />
                     <span>
-                      The system automatically detects if Table Name and Schema Name are inverted in your database and corrects them during query execution.
+                      Ready to apply! Click <strong>Save & Apply Configuration</strong> below to persist your mappings to the Monitoring Hub.
                     </span>
                   </div>
-
-                  <div className="space-y-2.5">
-                    <MappingRow
-                      label="Batch ID (Foreign Key)"
-                      description="Foreign key column matching the Batch Header BatchId to filter logs."
-                      currentVal={bronzeMapping.batch_id_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, batch_id_col: val }))}
-                    />
-                    <MappingRow
-                      label="Table Name"
-                      description="Name of the ingested Bronze table. Displayed in table details & counts."
-                      currentVal={bronzeMapping.table_name_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, table_name_col: val }))}
-                    />
-                    <MappingRow
-                      label="Schema Name"
-                      description="Schema of the ingested Bronze table (e.g. dbo, raw, stg)."
-                      currentVal={bronzeMapping.schema_name_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, schema_name_col: val }))}
-                    />
-                    <MappingRow
-                      label="Rows Processed / Ingested"
-                      description="Rows loaded (e.g. IngestionCount). Aggregated in Rows Processed KPI."
-                      currentVal={bronzeMapping.rows_processed_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, rows_processed_col: val }))}
-                    />
-                    <MappingRow
-                      label="Status"
-                      description="Ingestion status (e.g. Success, Failure). Used for KPI counts."
-                      currentVal={bronzeMapping.status_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, status_col: val }))}
-                    />
-                    <MappingRow
-                      label="Start Time"
-                      description="Table extraction start timestamp."
-                      currentVal={bronzeMapping.start_time_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, start_time_col: val }))}
-                    />
-                    <MappingRow
-                      label="End Time"
-                      description="Table extraction completion timestamp."
-                      currentVal={bronzeMapping.end_time_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, end_time_col: val }))}
-                    />
-                    <MappingRow
-                      label="Duration"
-                      description="Pre-computed table extraction duration in seconds or minutes."
-                      currentVal={bronzeMapping.duration_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, duration_col: val }))}
-                    />
-                    <MappingRow
-                      label="Error Message"
-                      description="Error description if bronze extraction failed."
-                      currentVal={bronzeMapping.error_message_col}
-                      columns={bronzeCols}
-                      onChange={(val) => setBronzeMapping(prev => ({ ...prev, error_message_col: val }))}
-                    />
-                  </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* STEP 4: Silver Layer Mapping */}
-          {activeStep === 4 && (
-            <div className="space-y-4">
-              <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#0078d4]" />
-                    <h2 className="text-sm font-bold text-[#242424]">Step 4: Silver Layer Refinement Column Mapping</h2>
-                  </div>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#eff6fc] text-[#0078d4] border border-[#c7e0f4]">
-                    Table: {silverTable || "None Selected"}
-                  </span>
-                </div>
-                <p className="text-xs text-[#605e5c]">
-                  Configure column mappings for your transformed Silver layer log table.
-                </p>
-              </div>
-
-              {!silverTable ? (
-                <div className="p-12 text-center bg-[#ffffff] rounded border border-[#edebe9] space-y-3">
-                  <AlertCircle className="w-8 h-8 text-[#8a660a] mx-auto" />
-                  <p className="text-xs text-[#605e5c]">
-                    Please select a <strong>Silver Log Table</strong> in Step 1 before mapping columns.
-                  </p>
-                  <button
-                    onClick={() => setActiveStep(1)}
-                    className="px-3.5 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition"
-                  >
-                    Go to Step 1
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-[#ffffff] border border-[#edebe9] rounded p-5 shadow-sm space-y-3">
-                  <div className="space-y-2.5">
-                    <MappingRow
-                      label="Batch ID (Foreign Key)"
-                      description="Foreign key column matching the Batch Header BatchId."
-                      currentVal={silverMapping.batch_id_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, batch_id_col: val }))}
-                    />
-                    <MappingRow
-                      label="Table Name"
-                      description="Name of the transformed Silver table."
-                      currentVal={silverMapping.table_name_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, table_name_col: val }))}
-                    />
-                    <MappingRow
-                      label="Schema Name"
-                      description="Database schema of the silver table (e.g. dbo, silver)."
-                      currentVal={silverMapping.schema_name_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, schema_name_col: val }))}
-                    />
-                    <MappingRow
-                      label="Rows Processed / Count"
-                      description="Loaded transformed row count."
-                      currentVal={silverMapping.rows_processed_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, rows_processed_col: val }))}
-                    />
-                    <MappingRow
-                      label="Status"
-                      description="Execution status (e.g. Success, Failure)."
-                      currentVal={silverMapping.status_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, status_col: val }))}
-                    />
-                    <MappingRow
-                      label="Start Time"
-                      description="Table load start timestamp."
-                      currentVal={silverMapping.start_time_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, start_time_col: val }))}
-                    />
-                    <MappingRow
-                      label="End Time"
-                      description="Table load end timestamp."
-                      currentVal={silverMapping.end_time_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, end_time_col: val }))}
-                    />
-                    <MappingRow
-                      label="Duration"
-                      description="Execution duration in minutes or seconds."
-                      currentVal={silverMapping.duration_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, duration_col: val }))}
-                    />
-                    <MappingRow
-                      label="Error Message"
-                      description="Error description if silver table load failed."
-                      currentVal={silverMapping.error_message_col}
-                      columns={silverCols}
-                      onChange={(val) => setSilverMapping(prev => ({ ...prev, error_message_col: val }))}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Stepper Navigation Command Bar */}
-          <div className="bg-[#ffffff] border border-[#edebe9] rounded p-4 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={activeStep === 1}
-                onClick={() => setActiveStep(prev => Math.max(prev - 1, 1))}
-                className="px-3.5 py-1.5 rounded bg-[#ffffff] hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#242424] text-xs font-medium transition flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Previous Step</span>
-              </button>
-
-              {activeStep < 4 ? (
-                <button
-                  type="button"
-                  onClick={() => setActiveStep(prev => Math.min(prev + 1, 4))}
-                  className="px-4 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
-                >
-                  <span>Next: {steps[activeStep]?.title}</span>
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="px-4 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isSaving ? "Saving..." : "Save & Complete Configuration"}</span>
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleResetMapping}
-                title="Clear all saved mappings and reset"
-                className="px-3 py-1.5 rounded bg-[#ffffff] hover:bg-[#fde7e9] border border-[#d1d1d1] text-[#a80000] text-xs font-medium transition flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Reset Mapping</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={isSaving}
-                className="px-4 py-1.5 rounded bg-[#0f6cbd] hover:bg-[#115ea3] text-white text-xs font-medium transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>{isSaving ? "Saving..." : "Save Mapping"}</span>
-              </button>
-            </div>
+            </main>
           </div>
-        </main>
-      </div>
+
+      {/* Wizard Footer Action Bar (Pinned across bottom) */}
+      <footer className="border-t border-[#edebe9] px-8 py-3.5 bg-white flex items-center justify-between shrink-0 shadow-xs">
+        <button
+          type="button"
+          onClick={handleResetMapping}
+          className="text-xs text-[#a80000] hover:underline flex items-center gap-1.5 transition"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>Reset Configuration</span>
+        </button>
+
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            disabled={activeStep === 1}
+            onClick={() => setActiveStep(prev => Math.max(prev - 1, 1))}
+            className="px-4 py-1.5 rounded-md border border-[#d1d1d1] bg-white text-[#242424] hover:bg-[#f5f5f5] text-xs font-medium transition flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span>Back</span>
+          </button>
+
+          {activeStep < 4 ? (
+            <button
+              type="button"
+              onClick={() => setActiveStep(prev => Math.min(prev + 1, 4))}
+              className="px-5 py-1.5 rounded-md bg-[#117865] hover:bg-[#0c5e4f] text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-xs"
+            >
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-5 py-1.5 rounded-md bg-[#117865] hover:bg-[#0c5e4f] text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+            >
+              {isSaving ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save & Apply Configuration</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </footer>
     </div>
   );
 }
 
 function MappingRow({ label, description, currentVal, columns, onChange }) {
   return (
-    <div className="p-3 rounded bg-[#ffffff] border border-[#edebe9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#c7e0f4] transition shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+    <div className="p-3 rounded-md bg-[#fafafa] border border-[#edebe9] flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#117865]/40 transition shadow-2xs">
       <div className="sm:w-1/2">
         <div className="font-semibold text-[#242424] text-xs flex items-center gap-1.5">
           <span>{label}</span>
         </div>
-        <p className="text-[11px] text-[#605e5c] mt-0.5 leading-snug">{description}</p>
+        <p className="text-[11px] text-[#616161] mt-0.5 leading-snug">{description}</p>
       </div>
 
       <div className="sm:w-1/2 flex items-center gap-2">
         <select
           value={currentVal || ''}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-[#ffffff] border border-[#d1d1d1] rounded px-3 py-1.5 text-xs text-[#242424] font-mono focus:outline-none focus:border-[#0f6cbd] cursor-pointer"
+          className="w-full bg-white border border-[#d1d1d1] rounded-md px-2.5 py-1.5 text-xs text-[#242424] font-mono focus:outline-none focus:border-[#117865] cursor-pointer shadow-2xs"
         >
           <option value="">-- Select Column --</option>
           {columns.map(c => (
-            <option key={c.name} value={c.name} className="bg-[#ffffff] text-[#242424]">
+            <option key={c.name} value={c.name} className="bg-white text-[#242424]">
               {c.name} ({c.dataType})
             </option>
           ))}
         </select>
         {currentVal ? (
-          <span className="px-2 py-0.5 rounded bg-[#dff6dd] border border-[#92c353] text-[10px] text-[#107c41] font-mono shrink-0 font-medium flex items-center gap-1">
-            <Check className="w-2.5 h-2.5" /> Mapped
+          <span className="px-2 py-0.5 rounded bg-[#e3f7ef] border border-[#117865]/30 text-[10px] text-[#117865] font-mono shrink-0 font-semibold flex items-center gap-1">
+            <Check className="w-2.5 h-2.5 stroke-[3]" /> Mapped
           </span>
         ) : (
-          <span className="px-2 py-0.5 rounded bg-[#f3f2f1] text-[10px] text-[#605e5c] font-mono shrink-0">
+          <span className="px-2 py-0.5 rounded bg-[#f5f5f5] text-[10px] text-[#616161] font-mono shrink-0">
             Unmapped
           </span>
         )}
@@ -1141,4 +1401,3 @@ function MappingRow({ label, description, currentVal, columns, onChange }) {
     </div>
   );
 }
-

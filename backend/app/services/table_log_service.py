@@ -70,26 +70,48 @@ class TableLogService:
 
         return artifacts
 
+    def _get_driver_name(self) -> str:
+        """
+        Dynamically selects the best available ODBC driver for SQL Server.
+        Prefers ODBC Driver 18, then ODBC Driver 17, then any other SQL Server driver.
+        """
+        available = pyodbc.drivers()
+        for candidate in ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"]:
+            if candidate in available:
+                return candidate
+        for d in available:
+            if "ODBC Driver" in d and "SQL Server" in d:
+                return d
+        raise RuntimeError(
+            f"No suitable ODBC Driver for SQL Server found. Installed drivers: {available}. "
+            f"Please install Microsoft ODBC Driver 17 or 18 for SQL Server."
+        )
+
     def _get_pyodbc_connection(self, server_fqdn: str, database_name: str) -> pyodbc.Connection:
         """
         Establishes an ODBC connection to the Fabric SQL Endpoint using ActiveDirectoryServicePrincipal.
         """
+        driver = self._get_driver_name()
         server = server_fqdn.strip()
         if not server.endswith(",1433") and ":" not in server:
             server = f"{server},1433"
 
-        conn_str = (
-            f"Driver={{ODBC Driver 18 for SQL Server}};"
+        base_conn_str = (
+            f"Driver={{{driver}}};"
             f"Server={server};"
             f"Database={database_name.strip()};"
             f"Authentication=ActiveDirectoryServicePrincipal;"
             f"UID={self.client_id};"
             f"PWD={self.client_secret};"
             f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
             f"Connection Timeout=30;"
         )
-        return pyodbc.connect(conn_str)
+
+        try:
+            return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=no;")
+        except Exception as e:
+            logger.warning(f"Connection with TrustServerCertificate=no failed: {e}. Retrying with TrustServerCertificate=yes...")
+            return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=yes;")
 
     async def get_schemas_and_tables(self, server_fqdn: str, database_name: str) -> List[Dict[str, str]]:
         """
@@ -102,7 +124,8 @@ class TableLogService:
                 cursor.execute("""
                     SELECT TABLE_SCHEMA, TABLE_NAME
                     FROM INFORMATION_SCHEMA.TABLES
-                    WHERE TABLE_TYPE = 'BASE TABLE'
+                    WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+                      AND TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA', 'queryinsights')
                     ORDER BY TABLE_SCHEMA, TABLE_NAME
                 """)
                 tables = []

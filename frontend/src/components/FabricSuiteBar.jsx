@@ -13,6 +13,7 @@ import {
 import WorkspaceSelector from './WorkspaceSelector';
 
 export default function FabricSuiteBar({
+  currentView = 'monitoring',
   currentWorkspaceId,
   onSelectWorkspace,
   isConnected,
@@ -62,7 +63,7 @@ export default function FabricSuiteBar({
             </span>
             <span className="text-[#d1d1d1] font-light text-sm hidden sm:inline">|</span>
             <span className="text-sm text-[#605e5c] font-normal hidden sm:inline">
-              Monitoring hub
+              {currentView === 'table-logs' ? 'Table logs' : currentView === 'table-log-config' ? 'Table log configuration' : 'Monitoring hub'}
             </span>
           </div>
         </div>
@@ -83,7 +84,7 @@ export default function FabricSuiteBar({
         </div>
       </div>
 
-      {/* Right Controls: Workspace Selector + Live Telemetry + Suite Actions */}
+      {/* Right Controls: Workspace Selector + Table Log Config + Live Telemetry + Refresh + Suite Actions */}
       <div className="flex items-center gap-2">
         {/* Workspace Selector */}
         <WorkspaceSelector
@@ -91,11 +92,23 @@ export default function FabricSuiteBar({
           onSelectWorkspace={onSelectWorkspace}
         />
 
-        {/* Live Sync telemetry status badge */}
+        {/* Lakehouse Table Log Configuration (beside workspace selection) */}
+        {currentWorkspaceId && onOpenTableLogConfig && (
+          <button
+            onClick={onOpenTableLogConfig}
+            title="Configure Lakehouse/Warehouse table-level logging"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-[#f3f2f1] text-[#323130] hover:text-[#008272] transition text-xs font-medium border border-[#edebe9] hover:border-[#008272]/40 bg-white shadow-2xs"
+          >
+            <Database className="w-3.5 h-3.5 text-[#008272]" />
+            <span>Table Log Config</span>
+          </button>
+        )}
+
+        {/* Live Sync telemetry status badge (next) */}
         {currentWorkspaceId && (
           <div 
             title={isConnected ? `Live WebSocket Telemetry connected • ${viewersCount} active viewer(s)` : "Reconnecting to live telemetry..."}
-            className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium border transition ${
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium border transition ${
               isConnected 
                 ? 'bg-[#dff6dd] text-[#107c41] border-[#107c41]/30'
                 : 'bg-[#fde7e9] text-[#a4262c] border-[#a4262c]/30'
@@ -123,26 +136,14 @@ export default function FabricSuiteBar({
           </div>
         )}
 
-        {/* Refresh button */}
+        {/* Refresh button (and then) */}
         <button
           onClick={onRefresh}
           title={lastUpdated ? `Sync with Fabric • Last synced: ${new Date(lastUpdated).toLocaleTimeString()}` : "Manual Fabric Poll Sync"}
-          className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition flex items-center justify-center"
+          className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition flex items-center justify-center border border-transparent hover:border-[#edebe9]"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-[#0f6cbd]" : ""}`} />
         </button>
-
-        {/* Lakehouse Table Log Configuration */}
-        {currentWorkspaceId && onOpenTableLogConfig && (
-          <button
-            onClick={onOpenTableLogConfig}
-            title="Configure Lakehouse/Warehouse table-level logging"
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-[#f3f2f1] text-[#323130] hover:text-[#008272] transition text-xs font-normal border border-transparent hover:border-[#edebe9]"
-          >
-            <Database className="w-3.5 h-3.5 text-[#008272]" />
-            <span className="hidden xl:inline">Table Log Config</span>
-          </button>
-        )}
 
         {/* Fluent Suite Icons */}
         <div className="flex items-center border-l border-[#edebe9] pl-1 ml-0.5 space-x-0.5">

@@ -10,7 +10,7 @@ import {
   Loader2,
   Database
 } from 'lucide-react';
-import { StatusBadge, formatDateTime, formatDuration, getActivityIcon, computeDuration } from './PipelineRow';
+import { StatusBadge, formatDateTime, formatDuration, getActivityIcon, computeDuration } from '../../features/monitoring/components/PipelineRow';
 
 function HistoryActivityRow({ activity, depth = 1, onSelectError }) {
   const isFailed = activity.status?.toLowerCase() === 'failed';

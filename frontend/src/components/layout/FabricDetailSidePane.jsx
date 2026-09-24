@@ -19,7 +19,7 @@ import {
   Users,
   Clock
 } from 'lucide-react';
-import { formatDateTime, formatDuration, getActivityIcon, computeDuration } from './PipelineRow';
+import { formatDateTime, formatDuration, getActivityIcon, computeDuration } from '../../features/monitoring/components/PipelineRow';
 
 export default function FabricDetailSidePane({ 
   item, 

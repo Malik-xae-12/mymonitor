@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, Loader2 } from 'lucide-react';
-import { apiFetch } from '../services/api/apiClient';
+import { apiFetch } from '../../services/api/apiClient';
 
 // Fabric Persona avatar background colors
 const PERSONA_COLORS = [

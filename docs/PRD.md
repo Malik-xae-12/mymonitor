@@ -67,3 +67,10 @@ Enterprise data platforms running on Microsoft Fabric Data Factory lack unified 
   - **Active Mode (3.5s)**: When at least one pipeline is `InProgress`, polls every 3.5s for live progress.
   - **Idle Mode (15.0s)**: When all pipelines are in terminal states (`Completed`, `Failed`), relaxes polling to 15s.
   - **Differential Pipeline Polling**: When 2 pipelines are running and 3 are succeeded, the 2 running pipelines are polled every 3.5s, while the 3 succeeded pipelines are checked only every 15s (with 0 activity calls).
+
+---
+
+## 4. Architectural Principles
+- **Backend**: FastAPI modular clean architecture (Router $\rightarrow$ Service $\rightarrow$ Repository $\rightarrow$ Models) with dedicated `core/` (config, security, tokens), `shared/` (`ApiResponse`, pagination, constants), and domain `modules/`.
+- **Frontend**: React 19 + Vite 8 feature-based architecture (`features/{monitoring,admin,table-logs,auth}`, `components/{layout,shared}`).
+- **Zero Overhead**: Minimal memory footprint, no redundant code, strictly separated presentation and domain logic.

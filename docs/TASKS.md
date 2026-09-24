@@ -53,13 +53,16 @@ Work on **one atomic task at a time**. Check off completed tasks and update `MEM
 - [x] TASK-507: Scope monitoring APIs + workspace picker to assigned workspaces
 - [ ] TASK-508: Token-aware WebSocket handshake; 401/403 handling in UI
 
-## Phase 6: Restructure into Feature Modules
-- [ ] TASK-601: Backend — migrate `api/routes_workspaces` into `modules/{workspaces,pipelines,sla,table_logs,diagnostics,schedules}`
-- [ ] TASK-602: Frontend — move components/hooks into `features/*` + `components/{ui,shared,layout}`
-- [ ] TASK-603: Add `routes/` (AppRoutes, PrivateRoute, RoleRoute) + `services/api/apiClient`
+## Phase 6: Architecture Realignment & Optimization
+- [x] TASK-601: Remove Next.js frontend from `next-fastapi-starter/` leaving only the FastAPI backend
+- [x] TASK-602: Update project documentation (`TASKS.md`, `ARCHITECTURE.md`, `PRD.md`, `MEMORY.md`) to document the architecture migration and cleanup
+- [x] TASK-603: Align FastAPI architecture with `project-scaffold` and `next-fastapi-starter/backend` (`core/security.py`, `core/tokens.py`, `shared/responses.py`, `shared/constants.py`, `app_factory.py`)
+- [x] TASK-604: Reorganize React frontend to adhere strictly to `react-vite-architecture.md` (`features/{monitoring,admin,table-logs,auth}`, `components/{layout,shared,ui}`, `routes/`, `services/`, `utils/`, `constants/`, `config/`, `context/`)
+- [x] TASK-605: Clean up dead/unwanted code and files, update all imports, verify `npm run build` and runtime integrity
 
 ## Phase 7: Fabric UI Redesign (Figma MCP + Fabric UI kit)
 - [ ] TASK-701: Pull Fabric UI kit tokens/frames via Figma MCP; map to Tailwind/Fluent tokens
 - [ ] TASK-702: Rebuild shell (nav rail, suite bar, command bar, side pane) to Fluent 2
 - [ ] TASK-703: Redesign each page to be self-explanatory per `docs/DESIGN.md` §6
 - [ ] TASK-704: Playwright MCP visual pass across the responsive matrix
+

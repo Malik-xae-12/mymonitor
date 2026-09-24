@@ -113,3 +113,94 @@ When a user re-runs a pipeline or a scheduled trigger fires:
 - Supports Lakehouse and Warehouse audit tables (Batch Header, Bronze Ingestion, Silver Ingestion).
 - Admins configure table catalog and column mappings via `TableLogConfigPage`.
 - Operational teams view ingestion lineage, batch IDs, row counts, execution durations, and error diagnostics in `TableLogsPage`.
+
+---
+
+## 9. FastAPI Clean Architecture Specification (Skill Aligned)
+Adhering strictly to `.agents/skills/project-scaffold/references/fastapi-architecture.md` and `next-fastapi-starter/backend`:
+```text
+backend/app/
+├── core/                        # System configurations, security & JWT
+│   ├── config.py                # Environment variables, settings (Pydantic BaseSettings)
+│   ├── security.py              # Password rules, validation, hashing
+│   ├── tokens.py                # JWT creation, decode, token expiration & validation
+│   └── rate_limiter.py          # Fabric REST rate limiting semaphore
+├── db/                          # Database connection and base abstractions
+│   └── session.py / db_service  # SQLite WAL session, connection lifecycle
+├── modules/                     # Domain-driven feature packages
+│   ├── auth/                    # Entra ID & JWT authentication workflows & dependencies
+│   ├── users/                   # RBAC users, roles, and workspace assignment management
+│   ├── workspaces/              # Fabric workspace & pipeline discovery endpoints
+│   └── table_logs/              # Lakehouse / Warehouse audit log queries
+├── services/                    # Background polling, alerting & AI diagnostics
+│   ├── leased_poller.py         # Adaptive dual-speed (3.5s/15s) differential poller
+│   ├── alert_service.py         # SLA watchdog & Gmail SMTP alert dispatcher
+│   ├── ai_diagnostic_service.py # Gemini 3.6 Flash failure analysis
+│   └── fabric_client.py         # Microsoft Fabric REST API client
+├── shared/                      # Common reusable utilities & envelopes
+│   ├── responses.py             # Standard ApiResponse(success, data, message)
+│   ├── pagination.py            # Pagination utilities
+│   └── constants.py             # System-wide constants
+└── main.py                      # Application bootstrap & router registration
+```
+
+---
+
+## 10. React (Vite) Feature-Based Architecture Specification (Skill Aligned)
+Adhering strictly to `.agents/skills/project-scaffold/references/react-vite-architecture.md`:
+```text
+frontend/src/
+├── components/
+│   ├── layout/                  # Application shell & structural containers
+│   │   ├── FabricSuiteBar.jsx   # Top Microsoft 365 / Fabric suite bar
+│   │   ├── FabricNavRail.jsx    # Left icon rail navigation
+│   │   └── FabricDetailSidePane.jsx # Right slide-over detail pane
+│   └── shared/                  # Reusable domain-agnostic UI & Modals
+│       ├── WorkspaceSelector.jsx
+│       ├── FabricPeoplePicker.jsx
+│       ├── DateFilterBar.jsx
+│       ├── RunHistoryModal.jsx
+│       ├── PipelineScheduleModal.jsx
+│       ├── SchedulesDrawer.jsx
+│       ├── SlaConfigModal.jsx
+│       ├── ErrorDetailModal.jsx
+│       └── ActivityList.jsx
+├── features/                    # Self-contained business domains
+│   ├── monitoring/              # Real-time pipeline monitoring hub
+│   │   ├── components/
+│   │   │   ├── PipelineTreeTable.jsx
+│   │   │   ├── PipelineRow.jsx
+│   │   │   ├── FabricMetricCards.jsx
+│   │   │   ├── FabricCommandBar.jsx
+│   │   │   └── DashboardHeader.jsx
+│   │   └── index.js
+│   ├── admin/                   # Admin console & RBAC management
+│   │   ├── components/
+│   │   │   ├── AdminConsole.jsx
+│   │   │   ├── UsersPage.jsx
+│   │   │   ├── PipelineTeamsPage.jsx
+│   │   │   └── WorkspaceAssignmentPage.jsx
+│   │   ├── api/
+│   │   └── index.js
+│   ├── table-logs/              # Lakehouse / Warehouse audit tables
+│   │   ├── components/
+│   │   │   ├── TableLogsPage.jsx
+│   │   │   ├── TableLogConfigPage.jsx
+│   │   │   ├── TableLogDashboardModal.jsx
+│   │   │   └── TableLogConfigModal.jsx
+│   │   └── index.js
+│   └── auth/                    # Entra ID login & authentication
+│       ├── components/
+│       │   ├── AuthGate.jsx
+│       │   └── LoginPage.jsx
+│       ├── context/
+│       │   └── AuthContext.jsx
+│       ├── hooks/
+│       │   └── useAuth.js
+│       └── index.js
+├── hooks/                       # Shared custom hooks
+│   └── useWorkspaceMonitoring.js
+├── services/                    # API clients & network utilities
+├── App.jsx                      # App root router & layout integration
+└── main.jsx                     # SPA bootstrap & MSAL provider
+```

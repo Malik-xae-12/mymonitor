@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Clock, CheckCircle2, AlertCircle, Send, Loader2, Users, UserCheck } from 'lucide-react';
-import { listUsers } from '../features/admin/api/adminApi';
+import { listUsers } from '../../features/admin/api/adminApi';
 
 function getInitials(name, email) {
   if (name) {

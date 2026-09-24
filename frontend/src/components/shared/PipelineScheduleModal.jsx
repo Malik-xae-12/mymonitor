@@ -9,7 +9,7 @@ import {
   Loader2,
   Repeat
 } from 'lucide-react';
-import { formatDateTime } from './PipelineRow';
+import { formatDateTime } from '../../features/monitoring/components/PipelineRow';
 
 export default function PipelineScheduleModal({ workspaceId, pipeline, isOpen, onClose }) {
   const [scheduleData, setScheduleData] = useState(null);

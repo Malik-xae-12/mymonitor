@@ -5,8 +5,8 @@ Maintains the dynamic pulse of the project across sessions.
 ---
 
 ## Current Status
-- **Phase**: Production Ready (Auth, RBAC Scoping, Adaptive Poller, SLA Alerting Delivered)
-- **Active Branch**: `admin` (committed: `a36a612`, pushed to `origin admin`)
+- **Phase**: Phase 6: Architecture Realignment & Optimization (Next-FastAPI starter cleanup, FastAPI modular architecture, React feature-based architecture)
+- **Active Branch**: `admin`
 - **Last Updated**: 2026-09-25
 
 ## Completed Milestones
@@ -33,7 +33,13 @@ Maintains the dynamic pulse of the project across sessions.
 - [x] Multi-schedule modal showing all configured schedules per pipeline
 - [x] Lakehouse/Warehouse table logging & batch lineage (Batch Header → Bronze → Silver)
 - [x] Google Gemini AI error diagnostics with SQLite error-hash caching
-- [x] Comprehensive documentation suite in `docs/`
+- [x] Phase 6: Architecture Realignment & Optimization:
+  - Removed Next.js frontend from `next-fastapi-starter/` keeping only FastAPI backend.
+  - Implemented FastAPI modular clean architecture: `app_factory.py`, `core/security.py`, `core/tokens.py`, `core/exceptions.py`, `shared/responses.py`, `shared/constants.py`, `shared/pagination.py`.
+  - Reorganized React frontend into full feature-based architecture (`features/{monitoring,admin,table-logs,auth}`, `components/{layout,shared,ui}`, `routes/`, `services/`, `utils/`, `constants/`, `config/`, `context/`).
+  - Removed dead/unwanted code (`AccessManagementPage.jsx`, `DashboardHeader.jsx`, `ActivityList.jsx`, flat root component files).
+  - Verified 100% build integrity (`npm run build`) and runtime backend imports.
+- [x] Comprehensive documentation suite in `docs/` (`PRD.md`, `ARCHITECTURE.md`, `TASKS.md`, `MEMORY.md`, `POLLER_AND_RBAC_GUIDE.md`)
 
 ## Immediate Operational Notes
 - Branch `admin` is synced with `origin/admin`.

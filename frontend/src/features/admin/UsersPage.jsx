@@ -4,7 +4,7 @@ import {
   UserPlus, Trash2, Check
 } from 'lucide-react';
 import { listUsers, setUserRole, addUser, deleteUser } from './api/adminApi';
-import FabricPeoplePicker from '../../components/FabricPeoplePicker';
+import FabricPeoplePicker from '../../components/shared/FabricPeoplePicker';
 
 function formatWhen(iso) {
   if (!iso) return '—';

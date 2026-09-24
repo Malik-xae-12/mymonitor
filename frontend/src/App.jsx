@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import FabricSuiteBar from './components/FabricSuiteBar';
-import FabricNavRail from './components/FabricNavRail';
-import PipelineTreeTable from './components/PipelineTreeTable';
-import FabricDetailSidePane from './components/FabricDetailSidePane';
-import ErrorDetailModal from './components/ErrorDetailModal';
-import SchedulesDrawer from './components/SchedulesDrawer';
-import RunHistoryModal from './components/RunHistoryModal';
-import PipelineScheduleModal from './components/PipelineScheduleModal';
-import SlaConfigModal from './components/SlaConfigModal';
-import TableLogsPage from './components/TableLogsPage';
-import TableLogConfigPage from './components/TableLogConfigPage';
-import WorkspaceSelector from './components/WorkspaceSelector';
-import AdminConsole from './features/admin/AdminConsole';
+import { FabricSuiteBar, FabricNavRail, FabricDetailSidePane } from './components/layout';
+import { 
+  WorkspaceSelector, 
+  ErrorDetailModal, 
+  SchedulesDrawer, 
+  RunHistoryModal, 
+  PipelineScheduleModal, 
+  SlaConfigModal 
+} from './components/shared';
+import { PipelineTreeTable } from './features/monitoring';
+import { TableLogsPage, TableLogConfigPage } from './features/table-logs';
+import { AdminConsole } from './features/admin';
 import { useAuth } from './features/auth';
 import { useWorkspaceMonitoring } from './hooks/useWorkspaceMonitoring';
 

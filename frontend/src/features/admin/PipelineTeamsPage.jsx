@@ -12,8 +12,8 @@ import {
   Database,
   ExternalLink
 } from 'lucide-react';
-import SlaConfigModal from '../../components/SlaConfigModal';
-import WorkspaceSelector from '../../components/WorkspaceSelector';
+import SlaConfigModal from '../../components/shared/SlaConfigModal';
+import WorkspaceSelector from '../../components/shared/WorkspaceSelector';
 
 export default function PipelineTeamsPage({ onOpenTableConfig }) {
   const [workspaces, setWorkspaces] = useState([]);

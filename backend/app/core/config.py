@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # When False, backend skips token validation (local dev only). Keep True in real use.
     AUTH_ENABLED: bool = True
 
+    # JWT & Auth Settings (aligned with next-fastapi-starter architecture)
+    ACCESS_SECRET_KEY: str = "fabric-monitor-jwt-secret-key-2026"
+    REFRESH_SECRET_KEY: str = "fabric-monitor-refresh-secret-key-2026"
+    RESET_PASSWORD_SECRET_KEY: str = "fabric-monitor-reset-secret-key-2026"
+    VERIFICATION_SECRET_KEY: str = "fabric-monitor-verification-secret-key-2026"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_SECONDS: int = 3600  # 1 hour
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     POLL_INTERVAL_ACTIVE_SECONDS: float = 3.5
     POLL_INTERVAL_IDLE_SECONDS: float = 15.0
     MAX_PARALLEL_FABRIC_REQUESTS: int = 5

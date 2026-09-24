@@ -1,7 +1,10 @@
 import React, { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MsalProvider } from '@azure/msal-react'
 import './index.css'
 import App from './App.jsx'
+import { msalInstance } from './config/msalInstance'
+import { AuthProvider, AuthGate } from './features/auth'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -43,11 +46,42 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </StrictMode>,
-)
+function AppTree() {
+  return (
+    <MsalProvider instance={msalInstance}>
+      <AuthProvider>
+        <AuthGate>
+          <App />
+        </AuthGate>
+      </AuthProvider>
+    </MsalProvider>
+  );
+}
+
+async function bootstrap() {
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await msalInstance.initialize();
+    // Safe to touch accounts only after initialize(); set an active account
+    // from cache so silent token acquisition works across reloads.
+    const accounts = msalInstance.getAllAccounts();
+    if (accounts.length > 0 && !msalInstance.getActiveAccount()) {
+      msalInstance.setActiveAccount(accounts[0]);
+    }
+    // Complete any in-flight redirect sign-in before first render.
+    await msalInstance.handleRedirectPromise();
+  } catch (err) {
+    // Non-fatal: render anyway so the login screen / error state can show.
+    console.error('MSAL initialization error:', err);
+  }
+  root.render(
+    <StrictMode>
+      <ErrorBoundary>
+        <AppTree />
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+}
+
+bootstrap();
 

@@ -1,0 +1,27 @@
+[     844ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[  504228ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/src/components/SlaConfigModal.jsx?t=1790161668048:0
+[  504230ms] [ERROR] [vite] Failed to reload /src/components/SlaConfigModal.jsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:3000/@vite/client:962
+[  864952ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[  866288ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 1489702ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[ 1491923ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 4108623ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[ 4110848ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 4110975ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://login.microsoftonline.com/008502d6-3f79-46f0-ab37-9354e3fe80ff/oauth2/v2.0/token?client-request-id=01a0ce2a-514f-7431-8e30-0edafe7e6995:0
+[ 4111098ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://login.microsoftonline.com/008502d6-3f79-46f0-ab37-9354e3fe80ff/oauth2/v2.0/token?client-request-id=01a0ce2a-514f-7431-8e30-0edafe7e6995:0
+[ 4279311ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 7189486ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/src/components/SlaConfigModal.jsx?t=1790168353272:0
+[ 7189487ms] [ERROR] [vite] Failed to reload /src/components/SlaConfigModal.jsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:3000/@vite/client:962
+[ 7405481ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/src/components/SlaConfigModal.jsx?t=1790168569349:0
+[ 7405482ms] [ERROR] [vite] Failed to reload /src/components/SlaConfigModal.jsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:3000/@vite/client:962
+[ 7904479ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[ 7907331ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 7907868ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:3000/api/auth/me:0
+[ 8217295ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[ 8281960ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 8282719ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:3000/api/auth/me:0
+[ 8985112ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:3000/@vite/client:1030
+[ 9873807ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804
+[ 9873917ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://login.microsoftonline.com/008502d6-3f79-46f0-ab37-9354e3fe80ff/oauth2/v2.0/token?client-request-id=01a0ce82-40df-738b-8a85-07c415a83995:0
+[ 9874031ms] [ERROR] Failed to load resource: net::ERR_NAME_NOT_RESOLVED @ https://login.microsoftonline.com/008502d6-3f79-46f0-ab37-9354e3fe80ff/oauth2/v2.0/token?client-request-id=01a0ce82-40df-738b-8a85-07c415a83995:0
+[68985164ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:3000/node_modules/.vite/deps/react-dom_client.js?v=f3c57b9b:15804

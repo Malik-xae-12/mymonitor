@@ -2,21 +2,24 @@ import React from 'react';
 import { 
   Activity, 
   TableProperties,
-  Layers,
-  Database
+  Database,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function FabricNavRail({ 
   currentView = 'monitoring', 
   onNavigateMonitoring,
   onNavigateTableLogs,
+  isAdmin = false,
+  onNavigateAdmin,
   workspaceName = 'Current Workspace'
 }) {
   const isMonitoringActive = currentView === 'monitoring';
   const isTableLogsActive = currentView === 'table-logs';
+  const isAdminActive = currentView === 'admin';
 
   return (
-    <aside className="w-52 bg-[#f5f5f5] border-r border-[#edebe9] flex flex-col justify-between p-2.5 shrink-0 z-30 select-none">
+    <aside className="w-52 bg-[#f5f5f5] border-r border-[#edebe9] flex flex-col justify-between p-2.5 shrink-0 z-30 select-none font-sans">
       {/* Top Nav: App Sections with L1 and L2 names */}
       <div className="space-y-3">
         {/* Navigation Category Header */}
@@ -76,6 +79,33 @@ export default function FabricNavRail({
               L2
             </span>
           </button>
+
+          {/* Admin Console (Pipeline L1/L2 Teams, Access & Users) */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onNavigateAdmin}
+              title="Admin console (Pipeline Teams & User Roles)"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition relative group text-left ${
+                isAdminActive
+                  ? "bg-white text-[#773adc] font-semibold shadow-xs border border-[#edebe9]"
+                  : "text-[#323130] hover:text-[#242424] hover:bg-[#ebebeb] font-medium"
+              }`}
+            >
+              {isAdminActive && (
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#773adc]" />
+              )}
+              <ShieldCheck className={`w-4 h-4 shrink-0 ${isAdminActive ? "text-[#773adc]" : "text-[#605e5c]"}`} />
+              <span className="truncate flex-1">Admin console</span>
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                isAdminActive 
+                  ? "bg-[#f3e8ff] text-[#773adc]" 
+                  : "bg-[#e1dfdd] text-[#605e5c]"
+              }`}>
+                Admin
+              </span>
+            </button>
+          )}
         </nav>
       </div>
 

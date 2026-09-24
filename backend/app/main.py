@@ -16,6 +16,9 @@ from backend.app.services.db_service import db_service
 from backend.app.services.alert_service import alert_service
 from backend.app.api.routes_workspaces import router as workspaces_router
 from backend.app.api.websocket_hub import router as websocket_router
+from backend.app.modules.auth import auth_router
+from backend.app.modules.users import users_router, users_service
+from backend.app.api.routes_directory import router as directory_router
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +32,9 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize SQLite DB, background poller, and SLA alert monitor
     logger.info("Initializing Microsoft Fabric Real-Time Monitoring Hub & SQLite DB...")
     await db_service.init_db()
+    # Seed RBAC role catalog + bootstrap admin users from ADMIN_EMAILS.
+    admin_emails = [e.strip() for e in (settings.ADMIN_EMAILS or "").split(",") if e.strip()]
+    await users_service.seed_defaults(admin_emails)
     leased_poller.start()
     alert_service.start()
     yield
@@ -58,6 +64,9 @@ app.add_middleware(
 )
 
 # Mount Routes
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(directory_router)
 app.include_router(workspaces_router)
 app.include_router(websocket_router)
 

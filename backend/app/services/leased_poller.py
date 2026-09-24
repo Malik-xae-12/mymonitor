@@ -206,7 +206,8 @@ class LeasedWorkspacePoller:
             # 1. Discover all Data Pipelines
             pipelines = await fabric_client.get_pipelines(workspace_id)
             if not pipelines:
-                return []
+                logger.warning(f"No pipelines returned by Fabric for {workspace_id}, preserving SQLite cache")
+                return await db_service.get_workspace_latest_tree(workspace_id)
 
             pipeline_names = {p.get("id"): p.get("displayName") for p in pipelines}
             await db_service.save_pipelines(workspace_id, pipelines, now_iso)
@@ -401,6 +402,8 @@ class LeasedWorkspacePoller:
 
                 for ws_id in active_workspaces:
                     snapshot = await self.sync_workspace_with_fabric(ws_id)
+                    if not snapshot:
+                        snapshot = await db_service.get_workspace_latest_tree(ws_id)
                     
                     message = {
                         "type": "FULL_SNAPSHOT",

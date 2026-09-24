@@ -688,6 +688,26 @@ export default function PipelineRow({
               errorData={errorData}
             />
 
+            {/* Per-Pipeline Assigned L1 & L2 Team Indicator */}
+            {pipeline.slaConfig && (pipeline.slaConfig.l1Email || pipeline.slaConfig.l1Name) && (
+              <div
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenSlaConfig) onOpenSlaConfig(pipeline);
+                }}
+                title={`Pipeline Team: L1 Support: ${pipeline.slaConfig.l1Name || pipeline.slaConfig.l1Email} • L2 Escalation: ${pipeline.slaConfig.l2Name || pipeline.slaConfig.l2Email || 'Not assigned'}`}
+                className="inline-flex items-center gap-1.5 mt-0.5 px-1.5 py-0.5 rounded bg-[#f3f2f1] hover:bg-[#eff6fc] border border-[#edebe9] hover:border-[#0f6cbd]/30 text-[#605e5c] hover:text-[#0f6cbd] text-[10px] transition cursor-pointer group/team"
+              >
+                <span className="w-3.5 h-3.5 rounded-full bg-[#0f6cbd] text-white flex items-center justify-center font-bold text-[8px]">
+                  {pipeline.slaConfig.l1Name ? pipeline.slaConfig.l1Name.slice(0, 2).toUpperCase() : 'L1'}
+                </span>
+                <span className="truncate max-w-[110px] font-medium">
+                  {pipeline.slaConfig.l1Name || (pipeline.slaConfig.l1Email ? pipeline.slaConfig.l1Email.split('@')[0] : 'L1 Support')}
+                </span>
+                <span className="text-[#a19f9d] text-[9px] group-hover/team:text-[#0f6cbd]">✎</span>
+              </div>
+            )}
+
             {isFailed && pipeline.incident && (
               <SlaCountdownBadge
                 incident={pipeline.incident}
@@ -801,8 +821,8 @@ export default function PipelineRow({
                       }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-[#323130] hover:bg-[#f3f2f1] hover:text-[#242424] transition"
                     >
-                      <Bell className="w-3.5 h-3.5 text-[#b78103]" />
-                      <span>Configure SLA & alerts</span>
+                      <Bell className="w-3.5 h-3.5 text-[#0f6cbd]" />
+                      <span>Configure L1/L2 team & SLA</span>
                     </button>
                   )}
 

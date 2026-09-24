@@ -1,0 +1,11 @@
+- generic [ref=e6]:
+  - generic [ref=e11]:
+    - heading "Microsoft Fabric" [level=1] [ref=e12]
+    - paragraph [ref=e13]: Real-Time Monitoring & Telemetry Hub
+  - generic [ref=e14]:
+    - heading "Sign in to your organization" [level=2] [ref=e15]
+    - paragraph [ref=e16]: Use your Microsoft Entra ID (Azure AD) work account. Role access and pipeline L1/L2 scope will be applied.
+  - button "Sign in with Microsoft" [ref=e17] [cursor=pointer]
+  - generic [ref=e24]:
+    - paragraph [ref=e25]: "Configured for Microsoft Entra ID Tenant:"
+    - paragraph [ref=e26]: 008502d6-3f79-46f0-ab37-9354e3fe80ff

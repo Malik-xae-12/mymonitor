@@ -168,6 +168,53 @@ class DatabaseService:
                 );
             """)
 
+            # 10. Workspace Assignments (RBAC: Admin assigns L1/L2 responsibility per workspace)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS workspace_assignments (
+                    workspace_id TEXT PRIMARY KEY,
+                    workspace_name TEXT,
+                    l1_email TEXT,
+                    l2_email TEXT,
+                    sla1_minutes INTEGER DEFAULT 30,
+                    sla2_minutes INTEGER DEFAULT 60,
+                    table_config_done INTEGER DEFAULT 0,
+                    assigned_by TEXT,
+                    updated_at TEXT
+                );
+            """)
+
+            # 11. Roles (RBAC role catalog)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT
+                );
+            """)
+
+            # 12. Users (signed-in identities + assigned role)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    display_name TEXT,
+                    oid TEXT,
+                    role_id TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT,
+                    last_login_at TEXT,
+                    FOREIGN KEY (role_id) REFERENCES roles(id)
+                );
+            """)
+
+            # Ensure per-pipeline SLA columns exist (added incrementally)
+            for _col, _type in [("sla1_minutes", "INTEGER"), ("sla2_minutes", "INTEGER"), ("l1_name", "TEXT"), ("l2_name", "TEXT")]:
+                try:
+                    await db.execute(f"ALTER TABLE sla_configs ADD COLUMN {_col} {_type};")
+                except Exception:
+                    pass
+
             # Indexes for instant querying
             await db.execute("CREATE INDEX IF NOT EXISTS idx_runs_ws ON pipeline_runs(workspace_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_runs_pipe ON pipeline_runs(pipeline_id);")
@@ -178,9 +225,83 @@ class DatabaseService:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_diag_hash ON ai_error_diagnostics(error_hash);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inc_pipe ON sla_incidents(pipeline_id);")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_inc_status ON sla_incidents(status);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_assign_l1 ON workspace_assignments(l1_email);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_assign_l2 ON workspace_assignments(l2_email);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role_id);")
 
             await db.commit()
             logger.info(f"SQLite database initialized at {self.db_path} (WAL mode enabled)")
+
+    # ------------------------------------------------------------------
+    # RBAC: Workspace assignments & signed-in user records
+    # ------------------------------------------------------------------
+    async def get_all_assignments(self) -> List[Dict[str, Any]]:
+        """Returns every workspace assignment (admin view)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM workspace_assignments ORDER BY workspace_name")
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_assignment(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM workspace_assignments WHERE workspace_id = ?", (workspace_id,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_assignments_for_user(self, email: str) -> List[Dict[str, Any]]:
+        """Returns assignments where the given email is the L1 or L2 responsible user."""
+        e = (email or "").lower()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM workspace_assignments
+                WHERE LOWER(l1_email) = ? OR LOWER(l2_email) = ?
+                ORDER BY workspace_name
+            """, (e, e))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def upsert_assignment(self, data: Dict[str, Any], assigned_by: str, when: str):
+        """Creates/updates the L1/L2 + SLA assignment for a workspace."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT INTO workspace_assignments (
+                    workspace_id, workspace_name, l1_email, l2_email,
+                    sla1_minutes, sla2_minutes, table_config_done, assigned_by, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    workspace_name=excluded.workspace_name,
+                    l1_email=excluded.l1_email,
+                    l2_email=excluded.l2_email,
+                    sla1_minutes=excluded.sla1_minutes,
+                    sla2_minutes=excluded.sla2_minutes,
+                    table_config_done=excluded.table_config_done,
+                    assigned_by=excluded.assigned_by,
+                    updated_at=excluded.updated_at
+            """, (
+                data.get("workspace_id"),
+                data.get("workspace_name"),
+                (data.get("l1_email") or "").lower(),
+                (data.get("l2_email") or "").lower(),
+                int(data.get("sla1_minutes") or 30),
+                int(data.get("sla2_minutes") or 60),
+                1 if data.get("table_config_done") else 0,
+                assigned_by,
+                when,
+            ))
+            await db.commit()
+
+    async def delete_assignment(self, workspace_id: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM workspace_assignments WHERE workspace_id = ?", (workspace_id,))
+            await db.commit()
+
+
 
     async def get_known_cached_run_ids(self, workspace_id: str) -> Set[str]:
         """Returns run IDs that are completed/failed and already have activity runs stored with all child pipelines resolved."""
@@ -536,7 +657,9 @@ class DatabaseService:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
-                SELECT pipeline_id, workspace_id, l1_email, l2_email, sla_minutes
+                SELECT pipeline_id, workspace_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
+                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
+                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
                 FROM sla_configs
                 WHERE workspace_id = ? AND pipeline_id = ?
             """, (workspace_id, pipeline_id))
@@ -546,29 +669,79 @@ class DatabaseService:
                     "pipelineId": row["pipeline_id"],
                     "workspaceId": row["workspace_id"],
                     "l1Email": row["l1_email"],
+                    "l1Name": row["l1_name"] or "",
                     "l2Email": row["l2_email"],
-                    "slaMinutes": row["sla_minutes"]
+                    "l2Name": row["l2_name"] or "",
+                    "slaMinutes": row["sla_minutes"],
+                    "sla1Minutes": row["sla1_minutes"],
+                    "sla2Minutes": row["sla2_minutes"]
                 }
             return {
                 "pipelineId": pipeline_id,
                 "workspaceId": workspace_id,
                 "l1Email": "uiaptracker@gmail.com",
+                "l1Name": "",
                 "l2Email": "uiaptracker@gmail.com",
-                "slaMinutes": 30
+                "l2Name": "",
+                "slaMinutes": 30,
+                "sla1Minutes": 30,
+                "sla2Minutes": 60
             }
 
-    async def save_sla_config(self, workspace_id: str, pipeline_id: str, l1_email: str, l2_email: str, sla_minutes: int, updated_at: str):
+    async def save_sla_config(self, workspace_id: str, pipeline_id: str, l1_email: str, l2_email: str, sla_minutes: int, updated_at: str, sla1_minutes: Optional[int] = None, sla2_minutes: Optional[int] = None, l1_name: Optional[str] = None, l2_name: Optional[str] = None):
+        # SLA1 (warning → L1) doubles as the legacy sla_minutes for the alert engine.
+        s1 = sla1_minutes if sla1_minutes is not None else sla_minutes
+        s2 = sla2_minutes if sla2_minutes is not None else sla_minutes
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
-                INSERT INTO sla_configs (pipeline_id, workspace_id, l1_email, l2_email, sla_minutes, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO sla_configs (pipeline_id, workspace_id, l1_email, l2_email, l1_name, l2_name, sla_minutes, sla1_minutes, sla2_minutes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(pipeline_id) DO UPDATE SET
+                    workspace_id=excluded.workspace_id,
                     l1_email=excluded.l1_email,
                     l2_email=excluded.l2_email,
+                    l1_name=excluded.l1_name,
+                    l2_name=excluded.l2_name,
                     sla_minutes=excluded.sla_minutes,
+                    sla1_minutes=excluded.sla1_minutes,
+                    sla2_minutes=excluded.sla2_minutes,
                     updated_at=excluded.updated_at
-            """, (pipeline_id, workspace_id, l1_email, l2_email, sla_minutes, updated_at))
+            """, (pipeline_id, workspace_id, l1_email, l2_email, l1_name or "", l2_name or "", s1, s1, s2, updated_at))
             await db.commit()
+
+    async def get_parent_pipelines(self, workspace_id: str) -> List[Dict[str, Any]]:
+        """Returns parent (master) pipelines for a workspace from the pipelines cache."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT id, displayName FROM pipelines
+                WHERE workspace_id = ? AND is_master = 1
+                ORDER BY displayName
+            """, (workspace_id,))
+            rows = await cursor.fetchall()
+            return [{"pipelineId": r["id"], "pipelineName": r["displayName"]} for r in rows]
+
+    async def get_sla_configs_for_workspace(self, workspace_id: str) -> Dict[str, Any]:
+        """Returns SLA configs keyed by pipeline id for a workspace (camelCase)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT pipeline_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
+                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
+                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
+                FROM sla_configs WHERE workspace_id = ?
+            """, (workspace_id,))
+            rows = await cursor.fetchall()
+            return {
+                r["pipeline_id"]: {
+                    "l1Email": r["l1_email"],
+                    "l1Name": r["l1_name"] or "",
+                    "l2Email": r["l2_email"],
+                    "l2Name": r["l2_name"] or "",
+                    "sla1Minutes": r["sla1_minutes"],
+                    "sla2Minutes": r["sla2_minutes"]
+                } for r in rows
+            }
 
     async def get_active_incident_for_run(self, pipeline_run_id: str) -> Optional[Dict[str, Any]]:
         """Gets active incident for a run if any exists."""
@@ -791,14 +964,28 @@ class DatabaseService:
             latest_run_rows = await cursor.fetchall()
             latest_runs_by_pid = {r["pipeline_id"]: dict(r) for r in latest_run_rows}
 
-            # 3. Fetch SLA configs
+            # 3. Fetch SLA configs with L1 & L2 names
             cursor = await db.execute("""
-                SELECT pipeline_id, l1_email, l2_email, sla_minutes
+                SELECT pipeline_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
+                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
+                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
                 FROM sla_configs
                 WHERE workspace_id = ?
             """, (workspace_id,))
             sla_rows = await cursor.fetchall()
-            sla_by_pid = {s["pipeline_id"]: dict(s) for s in sla_rows}
+            sla_by_pid = {
+                s["pipeline_id"]: {
+                    "pipelineId": s["pipeline_id"],
+                    "workspaceId": workspace_id,
+                    "l1Email": s["l1_email"],
+                    "l1Name": s["l1_name"] or "",
+                    "l2Email": s["l2_email"],
+                    "l2Name": s["l2_name"] or "",
+                    "slaMinutes": s["sla_minutes"],
+                    "sla1Minutes": s["sla1_minutes"],
+                    "sla2Minutes": s["sla2_minutes"],
+                } for s in sla_rows
+            }
 
             # 4. Fetch Active/Recent Incidents
             cursor = await db.execute("""
@@ -1152,14 +1339,28 @@ class DatabaseService:
                 """, (workspace_id,))
                 pipeline_rows = await cursor.fetchall()
 
-            # SLA configs
+            # SLA configs with L1 and L2 names
             cursor = await db.execute("""
-                SELECT pipeline_id, l1_email, l2_email, sla_minutes
+                SELECT pipeline_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
+                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
+                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
                 FROM sla_configs
                 WHERE workspace_id = ?
             """, (workspace_id,))
             sla_rows = await cursor.fetchall()
-            sla_by_pid = {s["pipeline_id"]: dict(s) for s in sla_rows}
+            sla_by_pid = {
+                s["pipeline_id"]: {
+                    "pipelineId": s["pipeline_id"],
+                    "workspaceId": workspace_id,
+                    "l1Email": s["l1_email"],
+                    "l1Name": s["l1_name"] or "",
+                    "l2Email": s["l2_email"],
+                    "l2Name": s["l2_name"] or "",
+                    "slaMinutes": s["sla_minutes"],
+                    "sla1Minutes": s["sla1_minutes"],
+                    "sla2Minutes": s["sla2_minutes"],
+                } for s in sla_rows
+            }
 
             # Schedules
             cursor = await db.execute("""

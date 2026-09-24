@@ -145,7 +145,25 @@ export function useWorkspaceMonitoring(
           if (message.workspaceId === targetWorkspaceId) {
             // Only update tree from live socket if on 'latest' view
             if (!dateFilterRef.current?.preset || dateFilterRef.current?.preset === 'latest') {
-              setPipelineTree(message.data || []);
+              const incoming = message.data || [];
+              if (incoming.length > 0) {
+                setPipelineTree(incoming);
+                const running = incoming.filter((p) => ['inprogress', 'running'].includes((p.status || '').toLowerCase())).length;
+                const succeeded = incoming.filter((p) => ['completed', 'succeeded', 'success'].includes((p.status || '').toLowerCase())).length;
+                const failed = incoming.filter((p) => (p.status || '').toLowerCase() === 'failed').length;
+                const cancelled = incoming.filter((p) => ['cancelled', 'canceled'].includes((p.status || '').toLowerCase())).length;
+                const notRun = incoming.filter((p) => ['no runs', 'noruns', 'notstarted', 'never executed', 'not run'].includes((p.status || '').toLowerCase())).length;
+                setMetrics({
+                  total: incoming.length,
+                  running,
+                  succeeded,
+                  failed,
+                  cancelled,
+                  notRun,
+                  scheduled: 0,
+                  notScheduled: 0,
+                });
+              }
               setLastUpdated(message.timestamp || new Date().toISOString());
               setViewersCount(message.viewersCount || 1);
               setIsLoading(false);

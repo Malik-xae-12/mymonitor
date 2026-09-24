@@ -9,7 +9,22 @@ class Settings(BaseSettings):
     AZURE_TENANT_ID: str
     AZURE_CLIENT_ID: str 
     AZURE_CLIENT_SECRET: str 
-    
+
+    # Microsoft Entra ID (Azure AD) sign-in / RBAC.
+    # These identify the SPA app registration used for user sign-in and token validation.
+    # May differ from the Fabric Service Principal above.
+    AZURE_AD_TENANT_ID: str = "008502d6-3f79-46f0-ab37-9354e3fe80ff"
+    AZURE_AD_CLIENT_ID: str = "25ad11d7-5885-4f0e-8424-919bf02e04eb"
+    # Azure AD Service Principal for selecting people / users (Microsoft Graph)
+    USERS_AZURE_AD_CLIENT_SECRET: str = "m1N8Q~tpbpecTl-wipABz2KMkRJI0LBJpSB.xaBI"
+    USERS_AZURE_AD_CLIENT_ID: str = "6eafc8c7-0d3f-4d8a-b8c1-308384cb6829"
+    USERS_AZURE_AD_TENANT_ID: str = "008502d6-3f79-46f0-ab37-9354e3fe80ff"
+
+    # Comma-separated list of bootstrap admin emails (case-insensitive).
+    ADMIN_EMAILS: str = ""
+    # When False, backend skips token validation (local dev only). Keep True in real use.
+    AUTH_ENABLED: bool = True
+
     POLL_INTERVAL_ACTIVE_SECONDS: float = 3.5
     POLL_INTERVAL_IDLE_SECONDS: float = 15.0
     MAX_PARALLEL_FABRIC_REQUESTS: int = 5

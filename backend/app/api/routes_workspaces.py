@@ -15,8 +15,12 @@ router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
 class SlaConfigRequest(BaseModel):
     l1Email: str
+    l1Name: Optional[str] = ""
     l2Email: str
+    l2Name: Optional[str] = ""
     slaMinutes: int = 30
+    sla1Minutes: Optional[int] = None
+    sla2Minutes: Optional[int] = None
 
 class IncidentResolveRequest(BaseModel):
     resolvedBy: Optional[str] = "Operator"
@@ -96,6 +100,25 @@ async def list_pipelines(workspace_id: str):
     pipelines = await fabric_client.get_pipelines(workspace_id)
     return pipelines
 
+@router.get("/{workspace_id}/parent-pipelines", response_model=List[Dict[str, Any]])
+async def list_parent_pipelines(workspace_id: str, force_sync: bool = False):
+    """Returns parent (master) pipelines for a workspace with their SLA1/SLA2 config.
+
+    Set `force_sync=true` to poll Fabric first so parent/child roles are resolved.
+    """
+    if force_sync:
+        try:
+            await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=True)
+        except Exception:
+            pass
+    parents = await db_service.get_parent_pipelines(workspace_id)
+    sla_by_pid = await db_service.get_sla_configs_for_workspace(workspace_id)
+    for p in parents:
+        cfg = sla_by_pid.get(p["pipelineId"])
+        p["sla1Minutes"] = cfg["sla1Minutes"] if cfg else None
+        p["sla2Minutes"] = cfg["sla2Minutes"] if cfg else None
+    return parents
+
 @router.get("/{workspace_id}/snapshot")
 async def get_workspace_snapshot(
     workspace_id: str, 
@@ -148,15 +171,21 @@ async def get_pipeline_sla_config(workspace_id: str, pipeline_id: str):
 
 @router.post("/{workspace_id}/pipelines/{pipeline_id}/sla")
 async def update_pipeline_sla_config(workspace_id: str, pipeline_id: str, payload: SlaConfigRequest):
-    """Updates L1 email, L2 email, and SLA target duration for a pipeline."""
+    """Updates L1 assignee, L2 assignee, and SLA1/SLA2 target durations for a pipeline."""
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    sla1 = payload.sla1Minutes if payload.sla1Minutes is not None else payload.slaMinutes
+    sla2 = payload.sla2Minutes if payload.sla2Minutes is not None else payload.slaMinutes
     await db_service.save_sla_config(
         workspace_id=workspace_id,
         pipeline_id=pipeline_id,
         l1_email=payload.l1Email.strip(),
         l2_email=payload.l2Email.strip(),
-        sla_minutes=payload.slaMinutes,
-        updated_at=now_iso
+        l1_name=(payload.l1Name or "").strip(),
+        l2_name=(payload.l2Name or "").strip(),
+        sla_minutes=sla1,
+        updated_at=now_iso,
+        sla1_minutes=sla1,
+        sla2_minutes=sla2
     )
 
     # If the pipeline is currently failed, rearm the SLA incident and dispatch L1 alert
@@ -164,16 +193,43 @@ async def update_pipeline_sla_config(workspace_id: str, pipeline_id: str, payloa
         workspace_id=workspace_id,
         pipeline_id=pipeline_id,
         l1_email=payload.l1Email.strip(),
-        sla_minutes=payload.slaMinutes
+        sla_minutes=sla1
     ))
 
     return {
         "status": "success",
         "pipelineId": pipeline_id,
         "l1Email": payload.l1Email,
+        "l1Name": payload.l1Name,
         "l2Email": payload.l2Email,
-        "slaMinutes": payload.slaMinutes
+        "l2Name": payload.l2Name,
+        "slaMinutes": sla1,
+        "sla1Minutes": sla1,
+        "sla2Minutes": sla2
     }
+
+@router.get("/{workspace_id}/pipeline-assignments")
+async def get_workspace_pipeline_assignments(workspace_id: str):
+    """Returns all pipelines for the workspace along with their per-pipeline L1 and L2 assignees."""
+    pipelines = await db_service.get_parent_pipelines(workspace_id)
+    sla_map = await db_service.get_sla_configs_for_workspace(workspace_id)
+    
+    results = []
+    for p in pipelines:
+        pid = p["pipelineId"]
+        sla_info = sla_map.get(pid, {})
+        results.append({
+            "pipelineId": pid,
+            "pipelineName": p["pipelineName"],
+            "workspaceId": workspace_id,
+            "l1Email": sla_info.get("l1Email") or "uiaptracker@gmail.com",
+            "l1Name": sla_info.get("l1Name") or "",
+            "l2Email": sla_info.get("l2Email") or "uiaptracker@gmail.com",
+            "l2Name": sla_info.get("l2Name") or "",
+            "sla1Minutes": sla_info.get("sla1Minutes", 30),
+            "sla2Minutes": sla_info.get("sla2Minutes", 60)
+        })
+    return results
 
 @router.post("/{workspace_id}/pipelines/{pipeline_id}/test-email")
 async def send_test_email(workspace_id: str, pipeline_id: str, payload: TestEmailRequest):

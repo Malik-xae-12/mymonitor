@@ -1,16 +1,20 @@
 import React from 'react';
 import { 
-  Wifi, 
   WifiOff, 
   RefreshCw, 
-  Database,
   Search,
-  Settings,
-  Bell,
-  HelpCircle,
-  MessageSquareQuote
+  ShieldCheck,
+  LogOut
 } from 'lucide-react';
-import WorkspaceSelector from './WorkspaceSelector';
+
+const ROLE_LABELS = { admin: 'Admin', l1: 'L1 Support', l2: 'L2 Support', none: 'No access' };
+
+function initialsFor(user) {
+  const source = user?.name || user?.email || 'User';
+  const parts = source.replace(/@.*/, '').split(/[.\s_-]+/).filter(Boolean);
+  const letters = (parts[0]?.[0] || 'U') + (parts[1]?.[0] || '');
+  return letters.toUpperCase();
+}
 
 export default function FabricSuiteBar({
   currentView = 'monitoring',
@@ -21,56 +25,40 @@ export default function FabricSuiteBar({
   lastUpdated,
   onRefresh,
   isLoading,
-  onOpenTableLogConfig
+  onOpenTableLogConfig,
+  user = null,
+  role = 'none',
+  isAdmin = false,
+  onOpenAdmin,
+  onSignOut
 }) {
   return (
-    <header className="h-12 bg-[#ffffff] border-b border-[#edebe9] text-[#242424] flex items-center justify-between px-3 sticky top-0 z-40 select-none shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-      {/* Left: 365 Waffle + Microsoft Fabric Branding */}
-      <div className="flex items-center gap-2.5">
-        {/* Microsoft 365 Waffle (9-dots) */}
-        <button 
-          title="App launcher"
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition"
-        >
-          <div className="grid grid-cols-3 gap-[3px] w-4 h-4 p-0.5">
-            {[...Array(9)].map((_, i) => (
-              <span key={i} className="w-[3px] h-[3px] rounded-[0.5px] bg-current"></span>
-            ))}
-          </div>
-        </button>
-
-        {/* Microsoft Fabric Logo Glyph */}
-        <div className="flex items-center gap-2">
-          <svg className="w-5 h-5 shrink-0" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="fabric_grad_light1" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#1177D7" />
-                <stop offset="50%" stopColor="#00A2ED" />
-                <stop offset="100%" stopColor="#00B7C3" />
-              </linearGradient>
-              <linearGradient id="fabric_grad_light2" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
-                <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
-              </linearGradient>
-            </defs>
-            <path d="M16 3 L29 16 L16 29 L3 16 Z" fill="url(#fabric_grad_light1)" />
-            <path d="M16 7 L25 16 L16 25 L7 16 Z" fill="url(#fabric_grad_light2)" />
-          </svg>
-          
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-[#242424] tracking-tight">
-              Microsoft Fabric
-            </span>
-            <span className="text-[#d1d1d1] font-light text-sm hidden sm:inline">|</span>
-            <span className="text-sm text-[#605e5c] font-normal hidden sm:inline">
-              {currentView === 'table-logs' ? 'Table logs' : currentView === 'table-log-config' ? 'Table log configuration' : 'Monitoring hub'}
-            </span>
-          </div>
-        </div>
+    <header className="h-12 bg-[#ffffff] border-b border-[#edebe9] text-[#242424] flex items-center justify-between px-4 sticky top-0 z-40 select-none shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      {/* Left: Microsoft Fabric Branding */}
+      <div className="flex items-center gap-2">
+        <svg className="w-5 h-5 shrink-0" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="fabric_grad_light1" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#1177D7" />
+              <stop offset="50%" stopColor="#00A2ED" />
+              <stop offset="100%" stopColor="#00B7C3" />
+            </linearGradient>
+            <linearGradient id="fabric_grad_light2" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+            </linearGradient>
+          </defs>
+          <path d="M16 3 L29 16 L16 29 L3 16 Z" fill="url(#fabric_grad_light1)" />
+          <path d="M16 7 L25 16 L16 25 L7 16 Z" fill="url(#fabric_grad_light2)" />
+        </svg>
+        
+        <span className="text-sm font-semibold text-[#242424] tracking-tight">
+          Microsoft Fabric
+        </span>
       </div>
 
       {/* Center: Global Search Bar */}
-      <div className="hidden md:flex items-center justify-center flex-1 max-w-lg mx-4">
+      <div className="hidden md:flex items-center justify-center flex-1 max-w-lg mx-6">
         <div className="relative w-full">
           <Search className="w-3.5 h-3.5 text-[#797775] absolute left-3 top-2.5" />
           <input
@@ -84,27 +72,9 @@ export default function FabricSuiteBar({
         </div>
       </div>
 
-      {/* Right Controls: Workspace Selector + Table Log Config + Live Telemetry + Refresh + Suite Actions */}
+      {/* Right Controls: Live Telemetry + Refresh + User Profile */}
       <div className="flex items-center gap-2">
-        {/* Workspace Selector */}
-        <WorkspaceSelector
-          currentWorkspaceId={currentWorkspaceId}
-          onSelectWorkspace={onSelectWorkspace}
-        />
-
-        {/* Lakehouse Table Log Configuration (beside workspace selection) */}
-        {currentWorkspaceId && onOpenTableLogConfig && (
-          <button
-            onClick={onOpenTableLogConfig}
-            title="Configure Lakehouse/Warehouse table-level logging"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded hover:bg-[#f3f2f1] text-[#323130] hover:text-[#008272] transition text-xs font-medium border border-[#edebe9] hover:border-[#008272]/40 bg-white shadow-2xs"
-          >
-            <Database className="w-3.5 h-3.5 text-[#008272]" />
-            <span>Table Log Config</span>
-          </button>
-        )}
-
-        {/* Live Sync telemetry status badge (next) */}
+        {/* Live Sync telemetry status badge */}
         {currentWorkspaceId && (
           <div 
             title={isConnected ? `Live WebSocket Telemetry connected • ${viewersCount} active viewer(s)` : "Reconnecting to live telemetry..."}
@@ -136,7 +106,7 @@ export default function FabricSuiteBar({
           </div>
         )}
 
-        {/* Refresh button (and then) */}
+        {/* Refresh button */}
         <button
           onClick={onRefresh}
           title={lastUpdated ? `Sync with Fabric • Last synced: ${new Date(lastUpdated).toLocaleTimeString()}` : "Manual Fabric Poll Sync"}
@@ -145,37 +115,35 @@ export default function FabricSuiteBar({
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-[#0f6cbd]" : ""}`} />
         </button>
 
-        {/* Fluent Suite Icons */}
-        <div className="flex items-center border-l border-[#edebe9] pl-1 ml-0.5 space-x-0.5">
-          <button 
-            title="Feedback" 
-            className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition hidden sm:flex"
+        {/* User Info & Admin Badge */}
+        <div className="flex items-center border-l border-[#edebe9] pl-2 ml-1 space-x-1.5">
+          {/* Role badge */}
+          <span
+            title={`Signed in as ${ROLE_LABELS[role] || 'User'}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-[#eff6fc] text-[#0f6cbd] border-[#0f6cbd]/30"
           >
-            <MessageSquareQuote className="w-4 h-4" />
-          </button>
-          
-          <button 
-            title="Settings" 
-            onClick={onOpenTableLogConfig}
-            className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-
-          <button 
-            title="Help" 
-            className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#242424] transition hidden sm:flex"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
+            <ShieldCheck className="w-3 h-3" />
+            {ROLE_LABELS[role] || 'User'}
+          </span>
 
           {/* User Profile Avatar */}
           <div 
-            title="Signed in as Fabric Administrator"
-            className="w-7 h-7 rounded-full bg-[#0f6cbd] hover:bg-[#115ea3] text-white flex items-center justify-center text-[11px] font-semibold border border-[#0f6cbd]/40 ml-1 cursor-pointer transition shadow-sm"
+            title={user?.email ? `Signed in as ${user.email}` : 'Signed in'}
+            className="w-7 h-7 rounded-full bg-[#0f6cbd] text-white flex items-center justify-center text-[11px] font-semibold border border-[#0f6cbd]/40 shadow-xs"
           >
-            FA
+            {initialsFor(user)}
           </div>
+
+          {/* Sign out */}
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              title="Sign out"
+              className="p-1.5 rounded hover:bg-[#f3f2f1] text-[#605e5c] hover:text-[#a4262c] transition"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>

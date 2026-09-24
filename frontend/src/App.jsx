@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FabricSuiteBar from './components/FabricSuiteBar';
 import FabricNavRail from './components/FabricNavRail';
 import PipelineTreeTable from './components/PipelineTreeTable';
@@ -10,11 +10,14 @@ import PipelineScheduleModal from './components/PipelineScheduleModal';
 import SlaConfigModal from './components/SlaConfigModal';
 import TableLogsPage from './components/TableLogsPage';
 import TableLogConfigPage from './components/TableLogConfigPage';
+import AdminConsole from './features/admin/AdminConsole';
+import { useAuth } from './features/auth';
 import { useWorkspaceMonitoring } from './hooks/useWorkspaceMonitoring';
 
 export default function App() {
+  const { profile, role, isAdmin, logout } = useAuth();
   const [workspaceId, setWorkspaceId] = useState('');
-  const [currentView, setCurrentView] = useState('monitoring'); // 'monitoring' | 'table-logs' | 'table-log-config'
+  const [currentView, setCurrentView] = useState('monitoring'); // 'monitoring' | 'table-logs' | 'table-log-config' | 'admin'
   const [selectedErrorActivity, setSelectedErrorActivity] = useState(null);
   const [selectedSidePaneItem, setSelectedSidePaneItem] = useState(null);
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false);
@@ -39,6 +42,35 @@ export default function App() {
     refresh,
     resolveIncident
   } = useWorkspaceMonitoring(workspaceId, dateFilter);
+
+  // Auto-initialize workspaceId to AllConnChk or first available workspace
+  useEffect(() => {
+    async function initWorkspace() {
+      try {
+        const res = await fetch('/api/workspaces');
+        if (res.ok) {
+          const list = await res.json();
+          if (list && list.length > 0) {
+            setWorkspaceId((prev) => {
+              if (prev) return prev;
+              const allConn = list.find((w) => w.displayName === 'AllConnChk' || w.name === 'AllConnChk');
+              return allConn ? allConn.id : list[0].id;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not auto-initialize workspace in App:', err);
+      }
+    }
+    initWorkspace();
+  }, []);
+
+  // Admins land on the setup console the first time their role resolves.
+  useEffect(() => {
+    if (isAdmin) {
+      setCurrentView((v) => (v === 'monitoring' ? 'admin' : v));
+    }
+  }, [isAdmin]);
 
   // When an error is clicked, open the Fabric Detail Side Pane
   const handleSelectError = (errorItem) => {
@@ -86,9 +118,14 @@ export default function App() {
         onRefresh={refresh}
         isLoading={isLoading}
         onOpenTableLogConfig={handleOpenTableLogConfig}
+        user={profile}
+        role={role}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setCurrentView('admin')}
+        onSignOut={logout}
       />
 
-      {/* Dynamic View: Full-Screen Table Logging Wizard vs Standard Fabric Shell */}
+      {/* Dynamic View: Table Logging Wizard (full page) vs Fabric Shell */}
       {currentView === 'table-log-config' ? (
         <TableLogConfigPage
           workspaceId={workspaceId}
@@ -101,15 +138,24 @@ export default function App() {
       ) : (
         /* 2. Fabric Shell: Nav Rail + Main Work Area */
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Fabric Left Nav Rail with L1 & L2 Names */}
+          {/* Fabric Left Nav Rail with L1, L2 & Admin Navigation */}
           <FabricNavRail 
             currentView={currentView}
             onNavigateMonitoring={() => setCurrentView('monitoring')}
             onNavigateTableLogs={() => handleOpenTableLogs()}
+            isAdmin={isAdmin}
+            onNavigateAdmin={() => setCurrentView('admin')}
             workspaceName={currentWorkspaceName}
           />
 
-          {currentView === 'table-logs' ? (
+          {currentView === 'admin' && isAdmin ? (
+            <AdminConsole
+              onOpenTableConfig={(wsId) => {
+                setWorkspaceId(wsId);
+                setCurrentView('table-log-config');
+              }}
+            />
+          ) : currentView === 'table-logs' ? (
             <TableLogsPage
               workspaceId={workspaceId}
               workspaceName={currentWorkspaceName}

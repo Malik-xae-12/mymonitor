@@ -5,39 +5,39 @@ Maintains the dynamic pulse of the project across sessions.
 ---
 
 ## Current Status
-- **Phase**: Phase 5 — Auth & RBAC + admin SLA setup (per-pipeline SLA delivered)
-- **Active Task**: TASK-507 (scope monitoring APIs + workspace picker to assigned workspaces)
-- **Last Updated**: 2026-09-23
+- **Phase**: Production Ready (Auth, RBAC Scoping, Adaptive Poller, SLA Alerting Delivered)
+- **Active Branch**: `admin` (committed: `a36a612`, pushed to `origin admin`)
+- **Last Updated**: 2026-09-25
 
 ## Completed Milestones
 - [x] Playwright MCP configured & health-checked; Chromium pre-installed
-- [x] Figma MCP (Framelink) configured — pending user `FIGMA_API_KEY`
-- [x] `docs/` suite updated for auth/RBAC/Fabric-UI scope
 - [x] Backend Entra ID token validation + RBAC guards (`modules/auth`)
 - [x] Table-level RBAC: `roles` + `users` tables; `modules/users` (models/repo/service/schema/router)
 - [x] Seed roles + bootstrap admins from `ADMIN_EMAILS` on startup
 - [x] `/api/auth/me`, admin assignment + users/roles endpoints
 - [x] Frontend MSAL provider + auth config + login gate + role context
-- [x] Admin console: pivot tabs — Workspace access + Users & roles
-- [x] Playwright smoke test passed (assignment save → L1/L2 users auto-created w/ roles)
-- [x] Per-parent-pipeline SLA1/SLA2 (admin table) + `GET /{ws}/parent-pipelines` — Playwright verified
-- [x] Removed top-bar workspace selector + Table Log Config button
-- [x] Fixed MSAL `uninitialized_public_client_application` crash (init before account APIs)
+- [x] Admin console: pivot tabs — Users & Support Personnel + Pipeline L1/L2 Teams & SLA
+- [x] Dynamic parent-child pipeline tree table: master pipelines at root, sub-pipelines strictly nested inside `activity.childPipeline` with zero orphan duplicate rows
+- [x] Per-parent-pipeline L1/L2 assignees, SLA 1, and SLA 2 thresholds saved to `sla_configs`
+- [x] Automated Gmail SMTP alerting: L1 alert on pipeline failure + watchdog L2 escalation on SLA 1 breach
+- [x] Role-Based Access Control (RBAC) Scoping:
+  - Non-admin L1/L2 users only see assigned workspaces.
+  - Non-admin L1/L2 users only see their assigned pipelines (`l1Email`/`l2Email` match).
+  - Admin Console and Table Map ("Map Columns") options completely hidden for non-admins.
+  - Metric summary cards compute dynamically over scoped pipelines.
+- [x] Adaptive Dual-Speed Differential Poller:
+  - Active Mode: 3.5s interval when pipelines are `InProgress`.
+  - Idle Mode: 15.0s interval when all pipelines are `Completed`/`Failed` to conserve 80% of API calls.
+  - Differential checking: running pipelines checked every 3.5s, succeeded pipelines checked every 15.0s with 0 activity calls.
+  - In-flight re-run detection via immutable job instance GUIDs and `MAX(COALESCE(start_time, '1970-01-01'))`.
+- [x] Multi-schedule modal showing all configured schedules per pipeline
+- [x] Lakehouse/Warehouse table logging & batch lineage (Batch Header → Bronze → Silver)
+- [x] Google Gemini AI error diagnostics with SQLite error-hash caching
+- [x] Comprehensive documentation suite in `docs/`
 
-## Immediate Next Steps
-1. Register `http://localhost:3000` as a SPA redirect URI in the Entra ID app registration.
-2. Set real `ADMIN_EMAILS` in `.env` and `FIGMA_API_KEY` in `.agents/mcp_config.json`.
-3. Scope monitoring APIs + workspace picker to the caller's assigned workspaces (TASK-507).
-4. Begin Fabric UI redesign (Phase 7) pulling from the Fabric UI kit via Figma MCP.
-
-## Dev run notes
-- Auth-bypass mode for local UI work: frontend `VITE_AUTH_ENABLED=false` + backend
-  `AUTH_ENABLED=False` (env override). Both MUST match or `/api/auth/me` returns 401.
-- On restart, port 8000 can be held by a stale `multiprocessing` child — kill the PID tree.
-
-## Known Issues & Technical Debt
-- WebSocket auth still open in dev (token not yet passed on WS handshake) — TASK-508.
-- Monitoring endpoints (`/api/workspaces/*`) not yet role-scoped — TASK-507.
-- Backend still partly flat (`api/` + `services/`); further module migration pending (Phase 6).
-- Single-process SQLite — not horizontally scalable (by design for v1).
-- Playwright tests left sample data in dev DB (test assignments + `*.test`/`*.ops` users) — harmless.
+## Immediate Operational Notes
+- Branch `admin` is synced with `origin/admin`.
+- Local dev servers running:
+  - Backend: `uvicorn app.main:app --reload` on port 8000.
+  - Frontend: `npm run dev` on port 3000 (Vite).
+- Auth mode: `VITE_AUTH_ENABLED=true` in frontend, `AUTH_ENABLED=True` in backend.

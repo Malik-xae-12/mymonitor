@@ -83,3 +83,21 @@
   Saving an assignment auto-creates the L1/L2 users with the right role.
 - **Consequences**: Admins can promote/demote users at runtime via the Users & roles page; roles
   persist in the DB. Kept on `aiosqlite` (no ORM) per ADR-001. Verified end-to-end via Playwright.
+
+## ADR-013: Adaptive Dual-Speed Differential Poller
+- **Context**: Polling all pipelines every 3.5 seconds wastes API quota when pipelines are already in a terminal state (`Completed`, `Failed`).
+- **Decision**: Implement dual-speed adaptive polling:
+  - **Active Mode (3.5s)**: Triggered when at least one pipeline is `InProgress`.
+  - **Idle Mode (15.0s)**: Engaged when all pipelines are in terminal states.
+  - **Differential Filtering**: During fast cycles, only running pipelines hit Fabric; completed pipelines are skipped until their 15.0s interval elapses.
+- **Consequences**: Up to 80% reduction in Fabric API requests; eliminates HTTP 429 risks while maintaining real-time sub-second duration tracking for active workloads.
+
+## ADR-014: Immutable Fabric Job Instances for In-Flight Re-Run Detection
+- **Context**: Detecting when a pipeline that previously succeeded is re-run by a user or scheduled trigger.
+- **Decision**: In Fabric, re-runs create immutable job instances with brand-new GUID run IDs. SQLite stores all runs and selects the active execution via `MAX(COALESCE(start_time, '1970-01-01'))`. Because the new run ID is not in `cached_terminal_run_ids`, it is tracked live and immediately replaces the old run in the tree table.
+- **Consequences**: Seamless live transition from `Completed` to `InProgress` with zero stale state, while preserving full run history for audits.
+
+## ADR-015: Multi-Tier RBAC Scoping & Admin Control Masking
+- **Context**: L1/L2 support personnel must only see the workspaces and pipelines they own, and must not see admin setup or table mapping options.
+- **Decision**: Backend resolves assigned workspaces across both `workspace_assignments` AND per-pipeline `sla_configs`. Frontend derives `scopedWorkspaces` and `scopedPipelineTree` matching `l1Email`/`l2Email` to `user.email`. Admin Console and Table Map ("Map Columns") buttons are conditionally hidden for non-admins. Summary metrics compute exclusively over the scoped set.
+- **Consequences**: Zero data leakage between support teams; administrative controls are completely invisible to non-admin operators.

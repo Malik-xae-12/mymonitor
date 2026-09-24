@@ -176,3 +176,52 @@ The application enforces role-based security:
   - Rows Read, Rows Inserted, Rows Updated, Rows Rejected.
   - Ingestion Status (Success / Error).
 - Admins configure tables and audit column mappings in `TableLogConfigPage`.
+
+---
+
+## 8. Practical Operational Scenarios & Concrete Examples
+
+### Scenario 1: All 5 Pipelines in a Workspace Have Succeeded
+* **Poller State**: **Idle Mode** (`POLL_INTERVAL_IDLE_SECONDS = 15.0s`).
+* **Execution**: Every 15 seconds, the poller queries Fabric for the 5 pipeline job instances.
+* **Activity Calls**: **0 activity calls** are made (all activities are loaded from the SQLite cache).
+* **Network Cost**: Exactly 5 lightweight instance checks every 15 seconds (averaging only 20 calls/minute for the entire workspace).
+
+### Scenario 2: 2 Pipelines are Running (`InProgress`) and 3 are Succeeded
+* **Poller State**: **Active Mode** (`POLL_INTERVAL_ACTIVE_SECONDS = 3.5s`).
+* **For the 2 Running Pipelines**:
+  * Queried **every 3.5 seconds**.
+  * Hits Fabric for their parent status **and** all their inner activities.
+  * Feeds the live ticking stopwatch and real-time step progress to the UI.
+* **For the 3 Succeeded Pipelines**:
+  * **Skipped** on the 3.5-second fast ticks!
+  * Only checked **once every 15 seconds** to see if a user re-triggered them.
+  * When checked at the 15-second mark, **0 activity calls** are made because their terminal execution tree is already frozen in SQLite.
+* **UI Snapshot**: The backend reads the SQLite tree (<15ms) containing the 2 active pipelines updating live and the 3 completed pipelines preserved, and broadcasts it over WebSockets.
+
+### Scenario 3: User Re-Runs a Pipeline That Previously Succeeded
+* **Event**: A pipeline that succeeded 1 hour ago is manually re-run or triggered by schedule.
+* **Fabric Execution**: Fabric does *not* overwrite the old run; it creates a **new Job Instance with a brand-new GUID Run ID** (e.g. `run-2026-new`) with status `InProgress`.
+* **Detection**: On the next polling cycle, `get_job_instances` returns `run-2026-new`.
+* **Cache Bypass**: Because `run-2026-new` has status `InProgress`, it is **not** in `cached_terminal_run_ids`.
+* **Active Selection**: `db_service.get_workspace_latest_tree` uses `MAX(COALESCE(start_time, '1970-01-01'))`. Because `run-2026-new` has the newest start timestamp, it immediately replaces the old run as the active execution row in the UI.
+* **Live Streaming**: The main table transitions the row to the spinning blue **`In progress`** badge, and the poller tracks its live inner activities.
+* **Freezing Upon Completion**: Once finished, `run-2026-new` is added to `cached_terminal_run_ids`. The previous run remains permanently preserved in the **Run History** modal.
+
+### Scenario 4: L1 Support User Logs In
+* **Authentication**: User logs in with Entra ID. `/api/auth/me` resolves their role as `l1` and populates `assigned_workspace_ids`.
+* **Workspace Selector**: Filters strictly to the workspaces where the user is assigned as L1. Unassigned workspaces are invisible.
+* **Pipeline Table**: Filters to **only pipelines where `p.slaConfig.l1Email === user.email`**. Pipelines assigned to other team members are omitted.
+* **Summary Metrics**: Metric cards (Total, In Progress, Completed, Failed, Cancelled, Not Run) compute exclusively over their assigned pipelines.
+* **UI Controls Masked**:
+  * The "Admin console" navigation item in the left rail is hidden.
+  * The "Map Columns" configuration button in `TableLogsPage` is hidden.
+  * SLA configuration modals are locked / hidden.
+
+### Scenario 5: Pipeline Execution Fails
+* **Detection**: Leased poller discovers that a run has status `Failed`.
+* **Incident Dispatch**: `alert_service.process_failed_run()` registers an active incident in `sla_incidents` (`status = 'ACTIVE'`).
+* **L1 Email Notification**: An automated HTML email is sent to `l1_email` with pipeline name, workspace, failure timestamp, error diagnostics, and SLA warning countdown.
+* **Watchdog Countdown**: Background task monitors elapsed time against `sla1_minutes`.
+* **L2 Escalation**: If unresolved after `sla1_minutes`, status escalates to `ESCALATED_L2`, sends an escalation alert email to `l2_email`, and broadcasts `SLA_BREACHED` over WebSockets.
+* **Resolution**: Operator clicks "Resolve Incident" in the UI to clear the alert state.

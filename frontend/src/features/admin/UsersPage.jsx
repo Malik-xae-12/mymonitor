@@ -76,7 +76,7 @@ export default function UsersPage() {
       const data = await addUser({
         email: selectedPerson.email,
         display_name: selectedPerson.displayName || selectedPerson.name || '',
-        oid: selectedPerson.id || '',
+        oid: selectedPerson.id || selectedPerson.oid || '',
         role_id: newPersonRole,
       });
       setUsers(Array.isArray(data?.users) ? data.users : []);
@@ -89,7 +89,14 @@ export default function UsersPage() {
       setSelectedPerson(null);
       setNewPersonRole('l1');
     } catch (err) {
-      setStatus({ type: 'err', msg: err.message || 'Failed to add user.' });
+      let errMsg = err.message || 'Failed to add user.';
+      try {
+        const parsed = JSON.parse(errMsg);
+        if (parsed.detail) errMsg = parsed.detail;
+      } catch {
+        /* use raw message */
+      }
+      setStatus({ type: 'err', msg: errMsg });
     } finally {
       setAdding(false);
     }
@@ -201,6 +208,9 @@ export default function UsersPage() {
               <FabricPeoplePicker
                 selectedUser={selectedPerson}
                 onSelectUser={(u) => setSelectedPerson(u)}
+                value={selectedPerson?.email || ''}
+                displayName={selectedPerson?.displayName || ''}
+                onChange={(u) => setSelectedPerson(u)}
                 placeholder="Search by name or email in your organization…"
               />
             </div>

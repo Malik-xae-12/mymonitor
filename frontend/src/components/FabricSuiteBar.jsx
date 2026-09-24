@@ -35,26 +35,32 @@ export default function FabricSuiteBar({
   return (
     <header className="h-12 bg-[#ffffff] border-b border-[#edebe9] text-[#242424] flex items-center justify-between px-4 sticky top-0 z-40 select-none shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       {/* Left: Microsoft Fabric Branding */}
-      <div className="flex items-center gap-2">
-        <svg className="w-5 h-5 shrink-0" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="fabric_grad_light1" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#1177D7" />
-              <stop offset="50%" stopColor="#00A2ED" />
-              <stop offset="100%" stopColor="#00B7C3" />
-            </linearGradient>
-            <linearGradient id="fabric_grad_light2" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
-              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
-              <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
-            </linearGradient>
-          </defs>
-          <path d="M16 3 L29 16 L16 29 L3 16 Z" fill="url(#fabric_grad_light1)" />
-          <path d="M16 7 L25 16 L16 25 L7 16 Z" fill="url(#fabric_grad_light2)" />
-        </svg>
-        
-        <span className="text-sm font-semibold text-[#242424] tracking-tight">
-          Microsoft Fabric
-        </span>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 shrink-0" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="fabric_grad_light1" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#1177D7" />
+                <stop offset="50%" stopColor="#00A2ED" />
+                <stop offset="100%" stopColor="#00B7C3" />
+              </linearGradient>
+              <linearGradient id="fabric_grad_light2" x1="16" y1="4" x2="16" y2="28" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
+                <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+              </linearGradient>
+            </defs>
+            <path d="M16 3 L29 16 L16 29 L3 16 Z" fill="url(#fabric_grad_light1)" />
+            <path d="M16 7 L25 16 L16 25 L7 16 Z" fill="url(#fabric_grad_light2)" />
+          </svg>
+          
+          <span className="text-sm font-semibold text-[#242424] tracking-tight">
+            Microsoft Fabric
+          </span>
+          <span className="text-[#d1d1d1] font-light text-sm hidden sm:inline">|</span>
+          <span className="text-sm text-[#605e5c] font-normal hidden sm:inline">
+            {currentView === 'table-logs' ? 'Table logs' : currentView === 'table-log-config' ? 'Table log configuration' : currentView === 'admin' ? 'Admin console' : 'Monitoring hub'}
+          </span>
+        </div>
       </div>
 
       {/* Center: Global Search Bar */}

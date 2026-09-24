@@ -15,7 +15,9 @@ import {
   Calendar,
   Database,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Users,
+  Clock
 } from 'lucide-react';
 import { formatDateTime, formatDuration, getActivityIcon, computeDuration } from './PipelineRow';
 
@@ -25,12 +27,32 @@ export default function FabricDetailSidePane({
   onClose,
   onOpenRunHistory,
   onOpenSchedule,
+  onOpenSlaConfig,
   onOpenTableLogs
 }) {
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'diagnostics' | 'activities'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'diagnostics'
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedFixGuide, setCopiedFixGuide] = useState(false);
+
+  // Live SLA & Assignee Config State
+  const [slaData, setSlaData] = useState(item?.slaConfig || null);
+
+  useEffect(() => {
+    setSlaData(item?.slaConfig || null);
+    const wsId = item?.workspaceId;
+    const pid = item?.pipelineId || (item?.activityType === 'Pipeline' ? item?.id : null);
+    if (wsId && pid && !pid.startsWith('norun-')) {
+      fetch(`/api/workspaces/${wsId}/pipelines/${pid}/sla`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            setSlaData(prev => ({ ...prev, ...data }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [item]);
 
   // AI State
   const [aiData, setAiData] = useState(null);
@@ -202,22 +224,6 @@ export default function FabricDetailSidePane({
             <span>Diagnostics & AI Fix</span>
           </button>
         )}
-
-        {item.activities && item.activities.length > 0 && (
-          <button
-            onClick={() => setActiveTab('activities')}
-            className={`py-2.5 border-b-2 transition flex items-center gap-1.5 ${
-              activeTab === 'activities'
-                ? 'border-[#0f6cbd] text-[#0f6cbd] font-semibold'
-                : 'border-transparent text-[#605e5c] hover:text-[#242424]'
-            }`}
-          >
-            <span>Activities</span>
-            <span className="px-1.5 py-0.2 rounded-full bg-[#f3f2f1] text-[10px] text-[#605e5c] font-mono">
-              {item.activities.length}
-            </span>
-          </button>
-        )}
       </div>
 
       {/* Pane Content Area */}
@@ -287,12 +293,71 @@ export default function FabricDetailSidePane({
                 <span className="text-[#605e5c]">Duration</span>
                 <span className="text-[#242424] font-mono font-medium">{formatDuration(duration)}</span>
               </div>
-              {item.slaConfig && (
-                <div className="px-3 py-2 flex items-center justify-between">
-                  <span className="text-[#605e5c]">Configured SLA</span>
-                  <span className="text-[#242424] font-mono">{item.slaConfig.slaMinutes} minutes</span>
-                </div>
-              )}
+              {/* L1 Support Lead */}
+              <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-[#605e5c] flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${slaData?.l1Email ? 'bg-[#0f6cbd]' : 'bg-[#a19f9d]'}`} />
+                  L1 Support Lead
+                </span>
+                {slaData?.l1Email ? (
+                  <div className="text-right">
+                    <span className="text-[#242424] font-semibold block">
+                      {slaData.l1Name || slaData.l1Email}
+                    </span>
+                    {slaData.l1Name && (
+                      <span className="text-[11px] text-[#605e5c] font-mono block">
+                        {slaData.l1Email}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-[#a19f9d] italic">Unassigned</span>
+                )}
+              </div>
+
+              {/* L2 Escalation Owner */}
+              <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-[#605e5c] flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${slaData?.l2Email ? 'bg-[#c45500]' : 'bg-[#a19f9d]'}`} />
+                  L2 Escalation Owner
+                </span>
+                {slaData?.l2Email ? (
+                  <div className="text-right">
+                    <span className="text-[#242424] font-semibold block">
+                      {slaData.l2Name || slaData.l2Email}
+                    </span>
+                    {slaData.l2Name && (
+                      <span className="text-[11px] text-[#605e5c] font-mono block">
+                        {slaData.l2Email}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-[#a19f9d] italic">Unassigned</span>
+                )}
+              </div>
+
+              {/* SLA 1 (Warning) */}
+              <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-[#605e5c] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#0f6cbd]" />
+                  SLA 1 (Warning)
+                </span>
+                <span className="px-2 py-0.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/20 font-mono font-semibold">
+                  {slaData?.sla1Minutes || slaData?.slaMinutes || 30} minutes
+                </span>
+              </div>
+
+              {/* SLA 2 (Breach) */}
+              <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-[#605e5c] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#c45500]" />
+                  SLA 2 (Breach)
+                </span>
+                <span className="px-2 py-0.5 rounded bg-[#fdf3e7] text-[#c45500] border border-[#c45500]/20 font-mono font-semibold">
+                  {slaData?.sla2Minutes || (slaData?.slaMinutes ? slaData.slaMinutes * 2 : 60)} minutes
+                </span>
+              </div>
             </div>
 
             {/* Direct Context Actions */}
@@ -323,6 +388,19 @@ export default function FabricDetailSidePane({
                     <div>
                       <div className="font-medium text-xs text-[#242424]">Schedules</div>
                       <div className="text-[10px] text-[#605e5c]">View recurrence rules</div>
+                    </div>
+                  </button>
+                )}
+
+                {onOpenSlaConfig && (
+                  <button
+                    onClick={() => onOpenSlaConfig(item)}
+                    className="flex items-center gap-2 p-2.5 rounded bg-[#faf9f8] hover:bg-[#f3f2f1] border border-[#edebe9] text-[#242424] transition text-left"
+                  >
+                    <Users className="w-4 h-4 text-[#0078d4]" />
+                    <div>
+                      <div className="font-medium text-xs text-[#242424]">Team &amp; SLA</div>
+                      <div className="text-[10px] text-[#605e5c]">L1/L2 assignees &amp; thresholds</div>
                     </div>
                   </button>
                 )}
@@ -526,50 +604,6 @@ export default function FabricDetailSidePane({
               <pre className="p-3 rounded bg-[#f8f8f7] border border-[#edebe9] text-[11px] font-mono text-[#242424] overflow-x-auto max-h-48 leading-relaxed select-text">
                 {fullDiagnosticsJson}
               </pre>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: ACTIVITIES */}
-        {activeTab === 'activities' && (
-          <div className="space-y-2">
-            <span className="text-[11px] font-semibold text-[#605e5c] uppercase tracking-wider block">
-              Child Activity Runs ({item.activities?.length || 0})
-            </span>
-            <div className="rounded border border-[#edebe9] bg-[#ffffff] overflow-hidden divide-y divide-[#edebe9] shadow-sm">
-              {item.activities && item.activities.map((act, i) => (
-                <div key={act.activityRunId || i} className="p-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="p-1 rounded bg-[#f3f2f1] border border-[#edebe9] shrink-0">
-                      {getActivityIcon(act.activityType)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium text-xs text-[#242424] truncate">
-                        {act.activityName}
-                      </div>
-                      <div className="text-[10px] text-[#605e5c] font-mono">
-                        {act.activityType} • {formatDuration(computeDuration(act))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    {act.status?.toLowerCase() === 'failed' ? (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#fde7e9] text-[#c42b1c] border border-[#f4b4b9]">
-                        Failed
-                      </span>
-                    ) : act.status?.toLowerCase() === 'inprogress' || act.status?.toLowerCase() === 'running' ? (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/30">
-                        Running
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#dff6dd] text-[#107c41] border border-[#107c41]/30">
-                        Completed
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}

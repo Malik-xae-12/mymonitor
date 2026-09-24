@@ -1,17 +1,17 @@
 # System Architecture Document
 
-**Last Updated:** 2026-09-23
+**Last Updated:** 2026-09-25
 
 ## 1. Tech Stack
 - **Frontend**: React 19 + Vite 8 (feature-based SPA), Tailwind CSS 4, lucide-react icons.
 - **Auth (frontend)**: MSAL (`@azure/msal-browser` + `@azure/msal-react`) — Microsoft Entra ID SPA sign-in.
 - **State**: Custom hook `useWorkspaceMonitoring` over native WebSocket + fetch (token-aware client).
 - **Backend**: FastAPI (Python 3.10+), Uvicorn ASGI server.
-- **Auth (backend)**: Entra ID JWT validation via JWKS (`PyJWT[crypto]`), RBAC guards.
+- **Auth (backend)**: Entra ID JWT validation via JWKS (`PyJWT[crypto]`), RBAC guards (`admin`, `l1`, `l2`).
 - **Database**: SQLite with WAL mode (`backend/data/fabric_monitor.db`), `aiosqlite`.
 - **Realtime**: Native WebSocket rooms via `connection_manager` / `websocket_hub`.
-- **External APIs**: Microsoft Fabric REST, Google Gemini (AI diagnostics), Gmail SMTP (alerts).
-- **Design source**: Microsoft Fabric UI kit (Figma) consumed via Figma MCP (Framelink).
+- **External APIs**: Microsoft Fabric REST APIs, Google Gemini (AI diagnostics), Gmail SMTP (alerts).
+- **Design source**: Microsoft Fabric UI kit (Fluent 2 design language).
 
 ## 2. System Overview & Data Flow
 ```mermaid
@@ -19,7 +19,7 @@ flowchart LR
     User["Browser (React SPA)"] -->|WebSocket Room| Hub["websocket_hub / connection_manager"]
     Hub --> Poller["leased_poller (active viewers only)"]
     Poller -->|Cached terminal runs| DB[("SQLite WAL")]
-    Poller -->|Only InProgress| RL["rate_limiter (Semaphore=5)"]
+    Poller -->|Only InProgress runs| RL["rate_limiter (Semaphore=5)"]
     RL --> Fabric["Microsoft Fabric REST APIs"]
     Poller -->|Broadcast snapshot| Hub
     Alert["alert_service (SLA watchdog)"] --> DB
@@ -29,7 +29,7 @@ flowchart LR
     TableLog["table_log_service"] --> DB
 ```
 
-## 3. Authentication & RBAC Flow
+## 3. Authentication & RBAC Isolation Flow
 ```mermaid
 sequenceDiagram
     participant U as User (Browser)
@@ -40,84 +40,76 @@ sequenceDiagram
     M-->>U: ID token (aud=client_id)
     U->>API: GET /api/auth/me (Bearer token)
     API->>API: Validate token via Entra JWKS
-    API->>DB: Resolve role + assigned workspaces
-    DB-->>API: role=admin|l1|l2, workspaces[]
+    API->>DB: Resolve role + assigned workspaces (via workspace_assignments & sla_configs)
+    DB-->>API: role=admin|l1|l2, is_admin, assigned_workspace_ids[]
     API-->>U: profile + role + scoped workspaces
-    Note over U,API: Admin -> assignment console; L1/L2 -> scoped monitoring
+    Note over U,API: Admin -> full access; L1/L2 -> strict workspace & pipeline isolation
 ```
-- **Role resolution**: an explicit `admin` role in the `users` table wins (bootstrapped from
-  `ADMIN_EMAILS` at startup). Otherwise role/scoping is derived from `workspace_assignments`
-  (matches signed-in email to L1/L2 columns) and synced back onto the user's `role_id`.
-- **Scoping**: every workspace/pipeline API filters by the caller's assigned workspaces
-  (admin bypasses the filter).
 
-## 4. Layer Separation & Invariants (Target Restructure)
-Backend migrates from flat `services/` + `api/` toward feature **modules** while keeping the
-existing `aiosqlite` `db_service` as the shared data layer.
-1. **Modules** (`app/modules/<domain>/`): `router.py` → `service.py` → (data via `db_service`
-   or a module `repository.py`), `schema.py`, `dependency.py`, `models/`. Domains: `auth`,
-   `users` (router/service/repository/schema/models), plus planned `workspaces`, `pipelines`,
-   `sla`, `table_logs`, `diagnostics`, `schedules`.
-2. **Core** (`app/core/`): `config.py` (settings inc. Entra ID), `rate_limiter.py`, `security.py`.
-3. **Data Layer** (`app/services/db_service.py`): all SQLite access. Routers never touch DB directly.
-4. **Services** (`app/services/`): cross-cutting engines — `leased_poller`, `fabric_client`,
-   `ai_diagnostic_service`, `alert_service`, `table_log_service`, `tree_builder`, `connection_manager`.
-5. **Schemas**: Pydantic V2 models per module for request/response validation.
+### Role-Based Access Control (RBAC) Invariants
+1. **Admin (`admin`)**:
+   - Access to Admin Console (Users & Support Personnel, Pipeline L1/L2 Teams & SLA).
+   - Can add/edit users, assign L1/L2 support leads, and configure SLA1 (Warning) / SLA2 (Breach) times.
+   - Access to Lakehouse / Warehouse column mapping configuration (`TableLogConfigPage`).
+   - Views all workspaces and all pipelines across the organization.
+2. **L1 Support Lead (`l1`)**:
+   - Strictly scoped: Only sees workspaces assigned to them in `workspace_assignments` or on any pipeline in `sla_configs`.
+   - Within each workspace, only sees pipelines where `p.slaConfig.l1Email == user.email`.
+   - Metric cards (Total, In Progress, Completed, Failed, Cancelled, Not Run) compute exclusively over their assigned pipelines.
+   - **Admin Console and Table Map ("Map Columns") options are completely hidden.**
+3. **L2 Escalation Owner (`l2`)**:
+   - Strictly scoped: Only sees workspaces assigned to them.
+   - Within each workspace, only sees pipelines where `p.slaConfig.l2Email == user.email`.
+   - Metric cards compute exclusively over their assigned pipelines.
+   - **Admin Console and Table Map ("Map Columns") options are completely hidden.**
 
-## 4. Key Architectural Decisions
-- **Differential polling**: terminal runs (`Succeeded`/`Failed`/`Cancelled`) cached forever;
-  only `InProgress` runs re-queried → avoids HTTP 429.
-- **Leased poller**: workspaces with 0 viewers sleep immediately.
-- **1-to-N multiplexing**: N viewers of one workspace share 1 Fabric call.
-- **SQLite WAL**: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=30000`.
-- **AI cache**: `ai_error_diagnostics` keyed by `error_hash` for zero repeat token spend.
+---
 
-## 5. Database Tables
-Monitoring (existing): `workspaces`, `pipelines`, `pipeline_runs`, `activity_runs`,
-`pipeline_schedules`, `sla_configs`, `sla_incidents`, `table_log_mappings`, `ai_error_diagnostics`.
-- `sla_configs` is **per pipeline** and gained `sla1_minutes` (warning → L1) and `sla2_minutes`
-  (breach → L2). `sla_minutes` mirrors SLA1 for the existing alert engine.
+## 4. Leased Polling & In-Flight Re-run Mechanics
 
-Parent-pipeline SLA endpoint:
-- `GET /api/workspaces/{id}/parent-pipelines?force_sync=` → `[{pipelineId, pipelineName,
-  sla1Minutes, sla2Minutes}]` (parents = `pipelines.is_master = 1`; `force_sync` polls Fabric).
-- `POST /api/workspaces/{id}/pipelines/{pid}/sla` accepts `sla1Minutes` / `sla2Minutes`.
+### Why Terminal States Are Cached
+In Microsoft Fabric, once a pipeline execution reaches a terminal status (`Completed`, `Failed`, `Cancelled`), its activity telemetry, error diagnostics, and duration are **immutable**.
+- To prevent exhausting Fabric API quotas (HTTP 429 rate limiting), `leased_poller.py` maintains an index of cached terminal run IDs (`db_service.get_known_cached_run_ids`).
+- For any run ID in this set, inner activity trees are retrieved in <15ms directly from SQLite, skipping external Fabric REST activity calls.
 
-New (auth/RBAC):
-- `roles` — `id` (PK: `admin`|`l1`|`l2`), `name`, `description`, `created_at`. Seeded on startup.
-- `users` — `id` (PK), `email` (unique), `display_name`, `oid`, `role_id` (FK → `roles.id`),
-  `is_active`, `created_at`, `last_login_at`.
-- `workspace_assignments` — `workspace_id` (PK), `workspace_name`, `l1_email`, `l2_email`,
-  `sla1_minutes`, `sla2_minutes`, `table_config_done`, `assigned_by`, `updated_at`.
-  (L1/L2 emails are workspace-level; SLA1/SLA2 thresholds live per parent pipeline in `sla_configs`.)
+### How Re-runs Are Detected and Handled
+When a user re-runs a pipeline or a scheduled trigger fires:
+1. **Immutable Job Instances**: Fabric creates a **brand-new Job Instance with a unique GUID Run ID** (e.g., `run_id = "run-2026-xyz"`). It does *not* overwrite the historical run.
+2. **Poller Instance Discovery**: On the next leased poller cycle (every 5 seconds for active viewers), `fabric_client.get_job_instances(workspace_id, pipeline_id)` fetches the pipeline's recent executions.
+3. **New In-Flight Run Saved**: The new run `run-2026-xyz` is returned with status `InProgress` and saved into SQLite.
+4. **Instant Latest Selection**: `get_workspace_latest_tree` selects the latest run via `MAX(COALESCE(start_time, '1970-01-01'))`. Because `run-2026-xyz` has the newest start timestamp, it immediately replaces the old run as the active execution shown in the tree table.
+5. **Live Polling**: Because `run-2026-xyz` has status `InProgress`, it is **not** in `cached_terminal_run_ids`. The poller queries Fabric for its live activity progress and streams updates over WebSockets.
+6. **Freezing upon Completion**: Only when `run-2026-xyz` transitions to `Completed`, `Failed`, or `Cancelled` does it enter `cached_terminal_run_ids`. The previous historical run remains permanently preserved in `pipeline_runs` for the Run History modal.
 
-## 6. Target Folder Structure
-**Backend** (feature-based modules over shared services):
-```
-backend/app/
-  core/         config.py, security.py, rate_limiter.py
-  modules/
-    auth/       router.py, service.py, schema.py, dependency.py
-    workspaces/ router.py, service.py, schema.py
-    ... (pipelines, sla, table_logs, diagnostics, schedules)
-  services/     leased_poller, fabric_client, db_service, alert_service, ...
-  models/       monitoring.py (Pydantic)
-  main.py
-```
-**Frontend** (feature-based SPA per project-scaffold):
-```
-frontend/src/
-  config/       authConfig.js, appConfig.js
-  routes/       AppRoutes.jsx, PrivateRoute.jsx, RoleRoute.jsx
-  services/     api/apiClient.js, api/endpoints.js
-  components/   ui/, shared/, layout/ (Fabric shell)
-  features/
-    auth/       context/AuthContext, hooks/useAuth, components/LoginPage
-    admin/      WorkspaceAssignment, SlaConfig, TableConfig
-    monitoring/ PipelineTreeTable, DateFilterBar, hooks/useWorkspaceMonitoring
-    diagnostics/ table-logs/ schedules/
-```
-- Dev: Vite serves on `:3000` (proxies `/api` and `/ws` to `:8000`).
-- Prod: `npm run build` → `frontend/dist/` served by FastAPI on `:8000`.
+---
 
-See `readme/ARCHITECTURE_GUIDE.md` for the deep-dive subsystem walkthrough.
+## 5. Pipeline Hierarchy & Sub-pipeline Nesting
+1. **Master / Root Pipelines**:
+   - Pipelines are categorized as master pipelines (`is_master = 1`) or child pipelines (`is_master = 0, is_child = 1`).
+   - Root rows in the Monitoring Hub display only parent master pipelines.
+2. **Dynamic Child Discovery (Zero Hardcoding)**:
+   - When an inner activity is of type `ExecutePipeline` or contains a `pipelineRunId` in its output, `_fetch_activity_tree` recursively retrieves the child pipeline's execution and inner activities.
+   - Child pipeline runs are nested directly inside `activity.childPipeline`.
+   - `db_service.update_child_pipeline_flags` automatically marks discovered child pipelines so they **never appear as duplicate orphan rows at the root level**.
+
+---
+
+## 6. Automated Alerting & SLA Escalation Engine
+- **Failure Trigger**: When `leased_poller` detects a pipeline run in status `Failed`, it dispatches `alert_service.process_failed_run()`.
+- **L1 Incident Creation**: An incident is registered in `sla_incidents` (`status = 'ACTIVE'`). An HTML alert email detailing the error and failure timestamp is dispatched to the configured `l1_email`.
+- **SLA 1 (Warning)**: Monitors elapsed time against `sla1_minutes`.
+- **SLA 2 (Breach Escalation)**: If the incident remains unresolved past the SLA threshold, the watchdog updates status to `ESCALATED_L2`, sends an escalation alert to `l2_email`, and broadcasts an `SLA_BREACHED` message over WebSockets.
+
+---
+
+## 7. Multi-Schedule Support
+- Fabric supports multiple recurrence triggers per pipeline.
+- `GET /api/workspaces/{workspace_id}/pipelines/{pipeline_id}/schedules` queries Fabric schedule endpoints.
+- Displays all configured schedules with their recurrence rules (daily, weekly, hourly), timezone, enabled status, and next scheduled run time in `PipelineScheduleModal`.
+
+---
+
+## 8. Table Logs & Ingestion Telemetry
+- Supports Lakehouse and Warehouse audit tables (Batch Header, Bronze Ingestion, Silver Ingestion).
+- Admins configure table catalog and column mappings via `TableLogConfigPage`.
+- Operational teams view ingestion lineage, batch IDs, row counts, execution durations, and error diagnostics in `TableLogsPage`.

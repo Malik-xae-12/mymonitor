@@ -578,7 +578,7 @@ export default function PipelineRow({
   onOpenTableLogs,
   onOpenSidePane
 }) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
 

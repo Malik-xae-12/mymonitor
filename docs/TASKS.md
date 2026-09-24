@@ -50,7 +50,7 @@ Work on **one atomic task at a time**. Check off completed tasks and update `MEM
       SLA1(→L1)/SLA2(→L2) per pipeline (L1/L2 emails stay workspace-level)
 - [x] TASK-513: Remove top-bar workspace selector + Table Log Config button from suite bar
 - [x] TASK-514: Fix MSAL crash — call account APIs only after `initialize()` (msalInstance/main)
-- [ ] TASK-507: Scope monitoring APIs + workspace picker to assigned workspaces
+- [x] TASK-507: Scope monitoring APIs + workspace picker to assigned workspaces
 - [ ] TASK-508: Token-aware WebSocket handshake; 401/403 handling in UI
 
 ## Phase 6: Restructure into Feature Modules

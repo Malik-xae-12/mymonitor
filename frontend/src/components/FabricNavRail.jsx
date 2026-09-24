@@ -1,7 +1,6 @@
 import React from 'react';
 import { 
   Activity, 
-  TableProperties,
   Database,
   ShieldCheck
 } from 'lucide-react';
@@ -9,18 +8,16 @@ import {
 export default function FabricNavRail({ 
   currentView = 'monitoring', 
   onNavigateMonitoring,
-  onNavigateTableLogs,
   isAdmin = false,
   onNavigateAdmin,
   workspaceName = 'Current Workspace'
 }) {
-  const isMonitoringActive = currentView === 'monitoring';
-  const isTableLogsActive = currentView === 'table-logs';
+  const isMonitoringActive = currentView === 'monitoring' || currentView === 'table-logs';
   const isAdminActive = currentView === 'admin';
 
   return (
     <aside className="w-52 bg-[#f5f5f5] border-r border-[#edebe9] flex flex-col justify-between p-2.5 shrink-0 z-30 select-none font-sans">
-      {/* Top Nav: App Sections with L1 and L2 names */}
+      {/* Top Nav: App Sections */}
       <div className="space-y-3">
         {/* Navigation Category Header */}
         <div className="px-2 pt-1">
@@ -34,7 +31,7 @@ export default function FabricNavRail({
           <button
             type="button"
             onClick={onNavigateMonitoring}
-            title="Monitoring hub (L1 - Data Pipelines Telemetry)"
+            title="Monitoring hub (Data Pipelines Telemetry)"
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition relative group text-left ${
               isMonitoringActive
                 ? "bg-white text-[#0f6cbd] font-semibold shadow-xs border border-[#edebe9]"
@@ -52,31 +49,6 @@ export default function FabricNavRail({
                 : "bg-[#e1dfdd] text-[#605e5c]"
             }`}>
               L1
-            </span>
-          </button>
-
-          {/* L2: Table Logs (Bronze & Silver Lakehouse/Warehouse Ingestion) */}
-          <button
-            type="button"
-            onClick={onNavigateTableLogs}
-            title="Table logs (L2 - Lakehouse / Warehouse Ingestion Logs)"
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs transition relative group text-left ${
-              isTableLogsActive
-                ? "bg-white text-[#117865] font-semibold shadow-xs border border-[#edebe9]"
-                : "text-[#323130] hover:text-[#242424] hover:bg-[#ebebeb] font-medium"
-            }`}
-          >
-            {isTableLogsActive && (
-              <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[#117865]" />
-            )}
-            <TableProperties className={`w-4 h-4 shrink-0 ${isTableLogsActive ? "text-[#117865]" : "text-[#605e5c]"}`} />
-            <span className="truncate flex-1">Table logs</span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-              isTableLogsActive 
-                ? "bg-[#e3f7ef] text-[#117865]" 
-                : "bg-[#e1dfdd] text-[#605e5c]"
-            }`}>
-              L2
             </span>
           </button>
 
@@ -121,3 +93,4 @@ export default function FabricNavRail({
     </aside>
   );
 }
+

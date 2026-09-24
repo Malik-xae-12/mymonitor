@@ -43,14 +43,14 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
   }, []);
 
   // 2. Fetch pipeline assignments for selected workspace
-  const fetchPipelineAssignments = async (wsId) => {
+  const fetchPipelineAssignments = async (wsId, forceSync = false) => {
     if (!wsId) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/workspaces/${wsId}/pipeline-assignments`);
+      const res = await fetch(`/api/workspaces/${wsId}/pipeline-assignments${forceSync ? '?force_sync=true' : ''}`);
       if (res.ok) {
         const data = await res.json();
-        setPipelines(data);
+        setPipelines(Array.isArray(data) ? data : []);
       } else {
         setPipelines([]);
       }
@@ -83,72 +83,79 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
   const selectedWorkspace = workspaces.find(w => w.id === selectedWorkspaceId);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#faf9f8] p-6 space-y-4 font-sans select-none overflow-y-auto">
-      {/* Top Description & Controls */}
-      <div className="bg-white border border-[#edebe9] rounded-lg p-5 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-[#242424]">
-                Pipeline L1 / L2 Team &amp; SLA Assignments
-              </h2>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/20">
-                Admin Scope
-              </span>
+    <div className="flex-1 flex flex-col min-h-0 bg-[#faf9f8] text-[#242424]">
+      {/* Scrollable Content Area */}
+      <div className="p-6 flex-1 min-h-0 overflow-y-auto space-y-4 font-sans select-none">
+        {/* Top Description & Controls */}
+        <div className="bg-white border border-[#edebe9] rounded-lg p-5 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-[#242424]">
+                  Pipeline L1 / L2 Team &amp; SLA Assignments
+                </h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#eff6fc] text-[#0f6cbd] border border-[#0f6cbd]/20">
+                  Admin Scope
+                </span>
+              </div>
+              <p className="text-xs text-[#605e5c] mt-0.5">
+                Select any workspace to configure and manage dedicated L1 Support and L2 Escalation personnel for individual pipelines.
+              </p>
             </div>
-            <p className="text-xs text-[#605e5c] mt-0.5">
-              Select any workspace to configure and manage dedicated L1 Support and L2 Escalation personnel for individual pipelines.
-            </p>
-          </div>
 
-          {/* Workspace Switcher & Table Log Config Action */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-[#605e5c]">Workspace:</span>
-            <WorkspaceSelector
-              currentWorkspaceId={selectedWorkspaceId}
-              onSelectWorkspace={(id) => setSelectedWorkspaceId(id)}
-              workspaces={workspaces}
-              align="right"
-            />
+            {/* Workspace Switcher & Table Log Config Action */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-[#605e5c]">Workspace:</span>
+              <WorkspaceSelector
+                currentWorkspaceId={selectedWorkspaceId}
+                onSelectWorkspace={(id) => setSelectedWorkspaceId(id)}
+                workspaces={workspaces}
+                align="right"
+              />
 
-            <button
-              onClick={() => fetchPipelineAssignments(selectedWorkspaceId)}
-              title="Refresh assignments"
-              className="p-1.5 rounded bg-white hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#605e5c] hover:text-[#242424] transition shadow-xs"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-[#0f6cbd]" : ""}`} />
-            </button>
-
-            {/* Table Log Config Button */}
-            {onOpenTableConfig && selectedWorkspaceId && (
               <button
-                type="button"
-                onClick={() => onOpenTableConfig(selectedWorkspaceId)}
-                title="Configure Lakehouse / Warehouse table logging for this workspace"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#f3f2f1] hover:bg-[#edebe9] border border-[#d1d1d1] text-[#242424] hover:text-[#008272] transition text-xs font-semibold shadow-xs"
+                onClick={() => fetchPipelineAssignments(selectedWorkspaceId, true)}
+                title="Refresh and sync pipelines from Microsoft Fabric"
+                className="p-1.5 rounded bg-white hover:bg-[#f3f2f1] border border-[#d1d1d1] text-[#605e5c] hover:text-[#242424] transition shadow-xs"
               >
-                <Database className="w-3.5 h-3.5 text-[#008272]" />
-                <span>Table Log Config</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-[#0f6cbd]" : ""}`} />
               </button>
-            )}
+
+              {/* Table Log Config Button */}
+              {onOpenTableConfig && selectedWorkspaceId && (
+                <button
+                  type="button"
+                  onClick={() => onOpenTableConfig(selectedWorkspaceId)}
+                  title="Configure Lakehouse / Warehouse table logging for this workspace"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#f3f2f1] hover:bg-[#edebe9] border border-[#d1d1d1] text-[#242424] hover:text-[#008272] transition text-xs font-semibold shadow-xs"
+                >
+                  <Database className="w-3.5 h-3.5 text-[#008272]" />
+                  <span>Table Log Config</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Search Bar and Pipeline Count */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+            <div className="relative max-w-md w-full">
+              <Search className="w-3.5 h-3.5 text-[#797775] absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Filter pipelines or assigned personnel..."
+                className="w-full bg-[#fafafa] border border-[#d1d1d1] rounded pl-9 pr-3 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] focus:bg-white transition"
+              />
+            </div>
+            <div className="text-xs font-semibold text-[#605e5c] shrink-0">
+              Showing {filteredPipelines.length} {filteredPipelines.length === 1 ? 'pipeline' : 'pipelines'}
+            </div>
           </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative max-w-md">
-          <Search className="w-3.5 h-3.5 text-[#797775] absolute left-3 top-2.5" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Filter pipelines or assigned personnel..."
-            className="w-full bg-[#fafafa] border border-[#d1d1d1] rounded pl-9 pr-3 py-1.5 text-xs text-[#242424] focus:outline-none focus:border-[#0f6cbd] focus:bg-white transition"
-          />
-        </div>
-      </div>
-
-      {/* Grid of Pipelines */}
-      <div className="bg-white border border-[#edebe9] rounded-lg shadow-xs overflow-hidden">
+        {/* Grid of Pipelines */}
+        <div className="bg-white border border-[#edebe9] rounded-lg shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-[#faf9f8] text-[#605e5c] font-semibold border-b border-[#edebe9]">
@@ -281,6 +288,7 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
           }}
         />
       )}
+      </div>
     </div>
   );
 }

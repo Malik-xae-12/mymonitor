@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import datetime
 import asyncio
+import logging
 from backend.app.services.fabric_client import fabric_client
 from backend.app.services.leased_poller import leased_poller
 from backend.app.services.db_service import db_service
@@ -10,6 +11,8 @@ from backend.app.services.alert_service import alert_service
 from backend.app.services.connection_manager import connection_manager
 from backend.app.services.table_log_service import table_log_service
 from backend.app.models.monitoring import PipelineSchedule
+
+logger = logging.getLogger("fabric_monitor.workspaces")
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
@@ -106,12 +109,26 @@ async def list_parent_pipelines(workspace_id: str, force_sync: bool = False):
 
     Set `force_sync=true` to poll Fabric first so parent/child roles are resolved.
     """
-    if force_sync:
-        try:
-            await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=True)
-        except Exception:
-            pass
     parents = await db_service.get_parent_pipelines(workspace_id)
+    if not parents or force_sync:
+        try:
+            fabric_pipes = await fabric_client.get_pipelines(workspace_id)
+            if fabric_pipes:
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                await db_service.save_pipelines(workspace_id, fabric_pipes, now_iso)
+                try:
+                    await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync)
+                except Exception:
+                    pass
+                parents = await db_service.get_parent_pipelines(workspace_id)
+                if not parents:
+                    parents = [
+                        {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
+                        for p in fabric_pipes
+                    ]
+        except Exception as exc:
+            logger.error(f"Error syncing parent pipelines from Fabric: {exc}")
+
     sla_by_pid = await db_service.get_sla_configs_for_workspace(workspace_id)
     for p in parents:
         cfg = sla_by_pid.get(p["pipelineId"])
@@ -131,15 +148,27 @@ async def get_workspace_snapshot(
     Returns the real-time hierarchical pipeline and activity runs tree
     for the selected workspace with date-based execution filtering and schedule forecasting.
     """
-    if (not date_preset or date_preset.lower() == "latest") and force_sync:
+    preset = (date_preset or "latest").lower().strip()
+    if (preset == "latest") and force_sync:
         await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=True)
     
     date_tree = await db_service.get_workspace_tree_by_date(
         workspace_id=workspace_id,
-        date_preset=date_preset or "latest",
+        date_preset=preset,
         start_date=start_date,
         end_date=end_date
     )
+
+    # If preset is latest and no pipelines in SQLite cache, fetch from Fabric synchronously
+    if (preset == "latest") and not date_tree.get("pipelines"):
+        await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=False)
+        date_tree = await db_service.get_workspace_tree_by_date(
+            workspace_id=workspace_id,
+            date_preset=preset,
+            start_date=start_date,
+            end_date=end_date
+        )
+
     return date_tree
 
 @router.get("/{workspace_id}/pipelines/{pipeline_id}/history")
@@ -188,6 +217,13 @@ async def update_pipeline_sla_config(workspace_id: str, pipeline_id: str, payloa
         sla2_minutes=sla2
     )
 
+    # Sync assignees into users and roles tables
+    try:
+        from backend.app.modules.users.service import users_service
+        await users_service.ensure_assignment_users(payload.l1Email.strip(), payload.l2Email.strip())
+    except Exception as exc:
+        logger.warning(f"Could not record user roles for SLA config: {exc}")
+
     # If the pipeline is currently failed, rearm the SLA incident and dispatch L1 alert
     asyncio.create_task(alert_service.rearm_and_notify_l1(
         workspace_id=workspace_id,
@@ -209,9 +245,28 @@ async def update_pipeline_sla_config(workspace_id: str, pipeline_id: str, payloa
     }
 
 @router.get("/{workspace_id}/pipeline-assignments")
-async def get_workspace_pipeline_assignments(workspace_id: str):
-    """Returns all pipelines for the workspace along with their per-pipeline L1 and L2 assignees."""
+async def get_workspace_pipeline_assignments(workspace_id: str, force_sync: bool = False):
+    """Returns all parent pipelines for the workspace along with their per-pipeline L1 and L2 assignees."""
     pipelines = await db_service.get_parent_pipelines(workspace_id)
+    if not pipelines or force_sync:
+        try:
+            fabric_pipes = await fabric_client.get_pipelines(workspace_id)
+            if fabric_pipes:
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                await db_service.save_pipelines(workspace_id, fabric_pipes, now_iso)
+                try:
+                    await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync)
+                except Exception:
+                    pass
+                pipelines = await db_service.get_parent_pipelines(workspace_id)
+                if not pipelines:
+                    pipelines = [
+                        {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
+                        for p in fabric_pipes
+                    ]
+        except Exception as exc:
+            logger.error(f"Error syncing pipelines from Fabric for workspace {workspace_id}: {exc}")
+
     sla_map = await db_service.get_sla_configs_for_workspace(workspace_id)
     
     results = []
@@ -222,9 +277,9 @@ async def get_workspace_pipeline_assignments(workspace_id: str):
             "pipelineId": pid,
             "pipelineName": p["pipelineName"],
             "workspaceId": workspace_id,
-            "l1Email": sla_info.get("l1Email") or "uiaptracker@gmail.com",
+            "l1Email": sla_info.get("l1Email") or "",
             "l1Name": sla_info.get("l1Name") or "",
-            "l2Email": sla_info.get("l2Email") or "uiaptracker@gmail.com",
+            "l2Email": sla_info.get("l2Email") or "",
             "l2Name": sla_info.get("l2Name") or "",
             "sla1Minutes": sla_info.get("sla1Minutes", 30),
             "sla2Minutes": sla_info.get("sla2Minutes", 60)

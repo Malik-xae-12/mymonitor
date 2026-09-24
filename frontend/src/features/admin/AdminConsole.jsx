@@ -17,7 +17,7 @@ export default function AdminConsole({ onOpenTableConfig }) {
   const [tab, setTab] = useState('users');
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[#faf9f8]">
+    <div className="flex-1 flex flex-col min-h-0 bg-[#faf9f8] overflow-hidden">
       {/* Pivot tabs */}
       <div className="bg-white border-b border-[#edebe9] px-6 flex items-center gap-2 select-none shadow-2xs">
         {TABS.map(({ id, label, icon: Icon }) => {
@@ -40,11 +40,13 @@ export default function AdminConsole({ onOpenTableConfig }) {
         })}
       </div>
 
-      {tab === 'users' ? (
-        <UsersPage />
-      ) : (
-        <PipelineTeamsPage onOpenTableConfig={onOpenTableConfig} />
-      )}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {tab === 'users' ? (
+          <UsersPage />
+        ) : (
+          <PipelineTeamsPage onOpenTableConfig={onOpenTableConfig} />
+        )}
+      </div>
     </div>
   );
 }

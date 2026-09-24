@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X, Loader2, User, Check, Briefcase } from 'lucide-react';
+import { Search, X, Loader2 } from 'lucide-react';
+import { apiFetch } from '../services/api/apiClient';
 
 // Fabric Persona avatar background colors
 const PERSONA_COLORS = [
@@ -21,10 +22,23 @@ function getPersonaColor(text = '') {
   return PERSONA_COLORS[Math.abs(hash) % PERSONA_COLORS.length];
 }
 
+function getPersonaInitials(name = '', email = '') {
+  if (name) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    if (parts.length === 1 && parts[0].length >= 2) return parts[0].slice(0, 2).toUpperCase();
+    if (parts.length === 1 && parts[0].length === 1) return parts[0].toUpperCase();
+  }
+  if (email) return email.slice(0, 2).toUpperCase();
+  return '??';
+}
+
 export default function FabricPeoplePicker({
+  selectedUser = null,
+  onSelectUser = null,
   value = '',
   displayName = '',
-  onChange,
+  onChange = null,
   placeholder = 'Search directory by name or email...',
   label = '',
   required = false,
@@ -35,6 +49,11 @@ export default function FabricPeoplePicker({
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef(null);
+
+  // Active user resolution supporting both prop patterns
+  const activeUser = selectedUser || (typeof value === 'object' && value ? value : (value ? { email: value, displayName: displayName || value } : null));
+  const activeEmail = activeUser?.email || (typeof value === 'string' ? value : '');
+  const activeDisplayName = activeUser?.displayName || activeUser?.name || displayName || activeEmail;
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -56,10 +75,22 @@ export default function FabricPeoplePicker({
       setIsLoading(true);
       try {
         const url = `/api/directory/users?query=${encodeURIComponent(trimmed)}`;
+        try {
+          const data = await apiFetch(url);
+          if (Array.isArray(data)) {
+            setResults(data);
+            return;
+          }
+        } catch {
+          // Fallback if unauthenticated apiFetch fails
+        }
+
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          setResults(data);
+          setResults(Array.isArray(data) ? data : []);
+        } else {
+          setResults([]);
         }
       } catch (err) {
         console.error('Directory search error:', err);
@@ -72,33 +103,53 @@ export default function FabricPeoplePicker({
   }, [query, isOpen]);
 
   const handleSelectUser = (user) => {
-    if (onChange) {
-      onChange({
-        email: user.email,
-        displayName: user.displayName,
-        initials: user.initials,
-        jobTitle: user.jobTitle
-      });
-    }
+    if (!user) return;
+    const normalized = {
+      id: user.id || user.oid || '',
+      oid: user.id || user.oid || '',
+      email: (user.email || user.userPrincipalName || '').toLowerCase(),
+      displayName: user.displayName || user.name || user.email,
+      name: user.displayName || user.name || user.email,
+      initials: user.initials || getPersonaInitials(user.displayName, user.email),
+      jobTitle: user.jobTitle || '',
+      department: user.department || '',
+      userPrincipalName: user.userPrincipalName || user.email,
+    };
+    if (onSelectUser) onSelectUser(normalized);
+    if (onChange) onChange(normalized);
     setQuery('');
     setIsOpen(false);
   };
 
-  const handleClear = () => {
-    if (onChange) {
-      onChange({
-        email: '',
-        displayName: '',
-        initials: '',
-        jobTitle: ''
-      });
-    }
+  const handleClear = (e) => {
+    if (e) e.stopPropagation();
+    if (onSelectUser) onSelectUser(null);
+    if (onChange) onChange(null);
     setQuery('');
+    setIsOpen(false);
   };
 
-  const initials = displayName 
-    ? (displayName.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase())
-    : (value ? value.slice(0, 2).toUpperCase() : '??');
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setIsOpen(false);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (results.length > 0) {
+        handleSelectUser(results[0]);
+      } else if (query.trim()) {
+        handleSelectUser({
+          id: '',
+          email: query.trim().toLowerCase(),
+          displayName: query.trim(),
+          initials: getPersonaInitials(query.trim(), query.trim()),
+        });
+      }
+    }
+  };
+
+  const initials = activeDisplayName 
+    ? getPersonaInitials(activeDisplayName, activeEmail)
+    : (activeEmail ? activeEmail.slice(0, 2).toUpperCase() : '??');
 
   return (
     <div className="space-y-1.5 text-left font-sans select-none" ref={containerRef}>
@@ -117,31 +168,34 @@ export default function FabricPeoplePicker({
       )}
 
       {/* Selected Person Chip Mode */}
-      {value ? (
-        <div className="flex items-center justify-between p-1.5 px-2 rounded border border-[#d1d1d1] bg-[#ffffff] hover:border-[#8a8886] transition shadow-2xs">
+      {activeEmail ? (
+        <div className="flex items-center justify-between h-8 px-2.5 rounded border border-[#0f6cbd]/40 bg-[#eff6fc]/40 hover:border-[#0f6cbd] transition shadow-2xs">
           <div className="flex items-center gap-2.5 min-w-0">
             {/* Fabric Persona Coin */}
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center font-semibold text-[11px] shrink-0 shadow-xs ${getPersonaColor(displayName || value)}`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center font-semibold text-[10px] shrink-0 shadow-xs ${getPersonaColor(activeDisplayName || activeEmail)}`}>
               {initials}
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-semibold text-[#242424] truncate">
-                  {displayName || value}
-                </span>
-              </div>
-              <span className="text-[11px] text-[#605e5c] font-mono block truncate">
-                {value}
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="text-xs font-semibold text-[#242424] truncate">
+                {activeDisplayName}
               </span>
+              <span className="text-[11px] text-[#605e5c] font-mono truncate">
+                ({activeEmail})
+              </span>
+              {activeUser?.jobTitle && (
+                <span className="text-[10px] text-[#797775] truncate hidden sm:inline">
+                  • {activeUser.jobTitle}
+                </span>
+              )}
             </div>
           </div>
 
           <button
             type="button"
             onClick={handleClear}
-            title="Change assigned person"
-            className="p-1 rounded text-[#797775] hover:text-[#242424] hover:bg-[#f3f2f1] transition ml-2"
+            title="Remove or change selected person"
+            className="p-1 rounded text-[#797775] hover:text-[#242424] hover:bg-[#d0e7f8] transition ml-2"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -149,7 +203,7 @@ export default function FabricPeoplePicker({
       ) : (
         /* Search / Input Box Mode */
         <div className="relative">
-          <div className="flex items-center border border-[#d1d1d1] rounded bg-white hover:border-[#8a8886] focus-within:border-[#0f6cbd] focus-within:ring-1 focus-within:ring-[#0f6cbd] transition px-2.5 py-1.5 shadow-2xs">
+          <div className="flex items-center h-8 border border-[#d1d1d1] rounded bg-white hover:border-[#8a8886] focus-within:border-[#0f6cbd] focus-within:ring-1 focus-within:ring-[#0f6cbd] transition px-2.5 shadow-2xs">
             {isLoading ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0f6cbd] shrink-0 mr-2" />
             ) : (
@@ -164,9 +218,22 @@ export default function FabricPeoplePicker({
                 if (!isOpen) setIsOpen(true);
               }}
               onFocus={() => setIsOpen(true)}
+              onClick={() => setIsOpen(true)}
+              onKeyDown={handleKeyDown}
               placeholder={placeholder}
               className="w-full text-xs text-[#242424] placeholder-[#797775] focus:outline-none bg-transparent"
             />
+
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="p-0.5 text-[#797775] hover:text-[#242424] ml-1 shrink-0"
+                title="Clear search text"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Directory Users Dropdown */}
@@ -176,17 +243,20 @@ export default function FabricPeoplePicker({
                 results.map((user) => (
                   <div
                     key={user.id || user.email}
-                    onClick={() => handleSelectUser(user)}
-                    className="flex items-center gap-2.5 p-2 px-3 hover:bg-[#eff6fc] cursor-pointer transition text-left"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handleSelectUser(user);
+                    }}
+                    className="flex items-center gap-2.5 p-2 px-3 hover:bg-[#eff6fc] cursor-pointer transition text-left group"
                   >
                     {/* Persona Coin */}
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center font-semibold text-[11px] shrink-0 ${getPersonaColor(user.displayName || user.email)}`}>
-                      {user.initials || 'US'}
+                      {user.initials || getPersonaInitials(user.displayName, user.email)}
                     </div>
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-[#242424] truncate">
+                        <span className="text-xs font-semibold text-[#242424] group-hover:text-[#0f6cbd] truncate">
                           {user.displayName}
                         </span>
                         {user.jobTitle && (
@@ -204,18 +274,25 @@ export default function FabricPeoplePicker({
               ) : (
                 <div className="p-3 text-center text-xs text-[#605e5c] space-y-1">
                   {isLoading ? (
-                    <span>Searching organization directory...</span>
-                  ) : query ? (
+                    <div className="flex items-center justify-center gap-1.5 py-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0f6cbd]" />
+                      <span>Searching organization directory...</span>
+                    </div>
+                  ) : query.trim() ? (
                     <div>
-                      <p>No directory match found for &quot;{query}&quot;</p>
+                      <p>No directory match found for &quot;{query.trim()}&quot;</p>
                       <button
                         type="button"
-                        onClick={() => handleSelectUser({
-                          email: query.trim().toLowerCase(),
-                          displayName: query.trim(),
-                          initials: query.slice(0, 2).toUpperCase()
-                        })}
-                        className="text-xs text-[#0f6cbd] font-semibold hover:underline mt-1 inline-block"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectUser({
+                            id: '',
+                            email: query.trim().toLowerCase(),
+                            displayName: query.trim(),
+                            initials: getPersonaInitials(query.trim(), query.trim()),
+                          });
+                        }}
+                        className="text-xs text-[#0f6cbd] font-semibold hover:underline mt-1 inline-block cursor-pointer"
                       >
                         Use &quot;{query.trim()}&quot; as custom email
                       </button>

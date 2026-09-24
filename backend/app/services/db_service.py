@@ -266,6 +266,25 @@ class DatabaseService:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def get_assigned_workspace_ids_for_user(self, email: str) -> List[str]:
+        """Returns all distinct workspace IDs where the user is assigned as L1 or L2 in workspace_assignments OR sla_configs."""
+        e = (email or "").strip().lower()
+        if not e:
+            return []
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+                SELECT DISTINCT workspace_id FROM (
+                    SELECT workspace_id FROM workspace_assignments
+                    WHERE LOWER(COALESCE(l1_email, '')) = ? OR LOWER(COALESCE(l2_email, '')) = ?
+                    UNION
+                    SELECT workspace_id FROM sla_configs
+                    WHERE LOWER(COALESCE(l1_email, '')) = ? OR LOWER(COALESCE(l2_email, '')) = ?
+                )
+                WHERE workspace_id IS NOT NULL AND workspace_id != ''
+            """, (e, e, e, e))
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows if r[0]]
+
     async def upsert_assignment(self, data: Dict[str, Any], assigned_by: str, when: str):
         """Creates/updates the L1/L2 + SLA assignment for a workspace."""
         async with aiosqlite.connect(self.db_path) as db:
@@ -423,7 +442,7 @@ class DatabaseService:
                 if ir["pipeline_id"]: child_ids.add(str(ir["pipeline_id"]).strip().lower())
                 if ir["pipeline_name"]: child_names.add(str(ir["pipeline_name"]).strip().lower())
 
-            # 4. Update all pipelines for this workspace
+            # 4. Update all pipelines for this workspace based on dynamic child detection
             cursor = await db.execute("SELECT id, displayName FROM pipelines WHERE workspace_id = ?", (workspace_id,))
             all_pipes = await cursor.fetchall()
 
@@ -446,7 +465,7 @@ class DatabaseService:
                 pid = r.get("pipelineId") or r.get("itemId")
                 pname = r.get("pipelineName") or r.get("itemDisplayName") or "Pipeline"
                 status = r.get("status") or "Unknown"
-                st = r.get("startTimeUtc") or r.get("startTime")
+                st = r.get("startTimeUtc") or r.get("startTime") or (updated_at if str(status).lower() in ("inprogress", "running", "notstarted") else None)
                 et = r.get("endTimeUtc") or r.get("endTime")
                 dur = r.get("durationInMs")
                 invoke = r.get("invokeType", "Manual")
@@ -679,9 +698,9 @@ class DatabaseService:
             return {
                 "pipelineId": pipeline_id,
                 "workspaceId": workspace_id,
-                "l1Email": "uiaptracker@gmail.com",
+                "l1Email": "",
                 "l1Name": "",
-                "l2Email": "uiaptracker@gmail.com",
+                "l2Email": "",
                 "l2Name": "",
                 "slaMinutes": 30,
                 "sla1Minutes": 30,
@@ -719,6 +738,13 @@ class DatabaseService:
                 ORDER BY displayName
             """, (workspace_id,))
             rows = await cursor.fetchall()
+            if not rows:
+                cursor = await db.execute("""
+                    SELECT id, displayName FROM pipelines
+                    WHERE workspace_id = ?
+                    ORDER BY displayName
+                """, (workspace_id,))
+                rows = await cursor.fetchall()
             return [{"pipelineId": r["id"], "pipelineName": r["displayName"]} for r in rows]
 
     async def get_sla_configs_for_workspace(self, workspace_id: str) -> Dict[str, Any]:
@@ -1023,8 +1049,8 @@ class DatabaseService:
             sla_cfg = sla_by_pid.get(pid, {
                 "pipelineId": pid,
                 "workspaceId": workspace_id,
-                "l1Email": "uiaptracker@gmail.com",
-                "l2Email": "uiaptracker@gmail.com",
+                "l1Email": "",
+                "l2Email": "",
                 "slaMinutes": 30
             })
             sched_info = sched_by_pid.get(pid)
@@ -1386,8 +1412,8 @@ class DatabaseService:
                 sla_cfg = sla_by_pid.get(pid, {
                     "pipelineId": pid,
                     "workspaceId": workspace_id,
-                    "l1Email": "uiaptracker@gmail.com",
-                    "l2Email": "uiaptracker@gmail.com",
+                    "l1Email": "",
+                    "l2Email": "",
                     "slaMinutes": 30
                 })
 
@@ -1501,8 +1527,8 @@ class DatabaseService:
             sla_cfg = sla_by_pid.get(pid, {
                 "pipelineId": pid,
                 "workspaceId": workspace_id,
-                "l1Email": "uiaptracker@gmail.com",
-                "l2Email": "uiaptracker@gmail.com",
+                "l1Email": "",
+                "l2Email": "",
                 "slaMinutes": 30
             })
             sched_info = sched_by_pid.get(pid)

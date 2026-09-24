@@ -72,6 +72,7 @@ export default function PipelineTreeTable({
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         isFuture={!!dateFilterInfo?.isFuture}
+        isLoading={isLoading}
       />
 
       {/* Data Table Grid (Microsoft Fluent DetailsList Pattern - White Theme) */}
@@ -86,12 +87,40 @@ export default function PipelineTreeTable({
               Select a workspace from the Microsoft Fabric top suite bar to load and monitor pipeline activities.
             </p>
           </div>
-        ) : isLoading && pipelines.length === 0 ? (
-          <div className="py-16 text-center text-xs text-[#605e5c] space-y-2 bg-[#ffffff]">
-            <div className="w-10 h-10 rounded-full bg-[#eff6fc] border border-[#d1d1d1] flex items-center justify-center mx-auto text-[#0f6cbd]">
-              <Loader2 className="w-5 h-5 animate-spin" />
+        ) : isLoading ? (
+          <div className="bg-[#ffffff]">
+            {/* Indeterminate top shimmer line */}
+            <div className="h-0.5 w-full bg-[#eff6fc] overflow-hidden">
+              <div className="h-full w-1/3 bg-[#0f6cbd] rounded-full animate-indeterminate" />
             </div>
-            <div className="text-[#242424] font-medium">Loading Fabric pipeline execution hierarchy...</div>
+
+            {/* Spinner and loading message (no skeleton table below) */}
+            <div className="py-20 text-center text-xs text-[#605e5c] space-y-3">
+              <div className="relative w-10 h-10 mx-auto">
+                <div className="w-10 h-10 rounded-full border-2 border-[#eff6fc] border-t-[#0f6cbd] animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Loader2 className="w-4 h-4 text-[#0f6cbd] animate-spin" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-sm font-semibold text-[#242424]">
+                  Loading Fabric pipeline execution hierarchy...
+                </div>
+                <p className="text-xs text-[#605e5c]">
+                  Retrieving pipelines, runs, and telemetry for the selected workspace
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : pipelines.length === 0 ? (
+          <div className="py-16 text-center text-xs text-[#605e5c] bg-[#ffffff] space-y-2">
+            <div className="w-10 h-10 rounded-full bg-[#f3f2f1] border border-[#edebe9] flex items-center justify-center mx-auto text-[#605e5c]">
+              <Info className="w-5 h-5" />
+            </div>
+            <div className="text-sm font-semibold text-[#242424]">No pipelines found in this workspace</div>
+            <p className="text-[#605e5c] max-w-sm mx-auto text-xs">
+              This Microsoft Fabric workspace currently does not have any data pipelines.
+            </p>
           </div>
         ) : filteredPipelines.length === 0 ? (
           <div className="py-16 text-center text-xs text-[#605e5c] bg-[#ffffff] space-y-1.5">

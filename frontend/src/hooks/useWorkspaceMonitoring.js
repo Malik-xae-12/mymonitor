@@ -1,20 +1,22 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 
+const EMPTY_METRICS = {
+  total: 0,
+  running: 0,
+  succeeded: 0,
+  failed: 0,
+  cancelled: 0,
+  notRun: 0,
+  scheduled: 0,
+  notScheduled: 0
+};
+
 export function useWorkspaceMonitoring(
   workspaceId, 
   dateFilter = { preset: 'latest', startDate: null, endDate: null }
 ) {
   const [pipelineTree, setPipelineTree] = useState([]);
-  const [metrics, setMetrics] = useState({
-    total: 0,
-    running: 0,
-    succeeded: 0,
-    failed: 0,
-    cancelled: 0,
-    notRun: 0,
-    scheduled: 0,
-    notScheduled: 0
-  });
+  const [metrics, setMetrics] = useState(EMPTY_METRICS);
   const [dateFilterInfo, setDateFilterInfo] = useState({
     preset: 'latest',
     startDate: null,
@@ -26,13 +28,23 @@ export function useWorkspaceMonitoring(
   const [lastUpdated, setLastUpdated] = useState(null);
   const [viewersCount, setViewersCount] = useState(0);
   const [error, setError] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(Boolean(workspaceId));
+  const [prevWorkspaceId, setPrevWorkspaceId] = useState(workspaceId);
+
+  if (workspaceId && workspaceId !== prevWorkspaceId) {
+    setPrevWorkspaceId(workspaceId);
+    setIsLoading(true);
+    setPipelineTree([]);
+    setMetrics(EMPTY_METRICS);
+  }
 
   const activeWorkspaceIdRef = useRef(workspaceId);
   const dateFilterRef = useRef(dateFilter);
+  const prevFilterKeyRef = useRef(`${dateFilter.preset}_${dateFilter.startDate}_${dateFilter.endDate}`);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const loadingTimeoutRef = useRef(null);
 
   useEffect(() => {
     activeWorkspaceIdRef.current = workspaceId;
@@ -62,11 +74,20 @@ export function useWorkspaceMonitoring(
       })
       .then((json) => {
         if (activeWorkspaceIdRef.current === targetWorkspaceId) {
-          setPipelineTree(json.pipelines || []);
+          const incoming = json.pipelines || [];
+          setPipelineTree(incoming);
           if (json.metrics) setMetrics(json.metrics);
           if (json.dateFilter) setDateFilterInfo(json.dateFilter);
           setLastUpdated(new Date().toISOString());
-          setIsLoading(false);
+
+          // If pipelines exist, dismiss loading. If empty, keep loading active so WebSocket / backend sync delivers.
+          if (incoming.length > 0) {
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
+            }
+            setIsLoading(false);
+          }
         }
       })
       .catch((err) => {
@@ -111,10 +132,22 @@ export function useWorkspaceMonitoring(
       wsRef.current = null;
     }
 
-    // Clear previous workspace state
+    // Clear previous workspace state & initiate loading
     setPipelineTree([]);
+    setMetrics(EMPTY_METRICS);
     setIsConnected(false);
     setError(null);
+    setIsLoading(true);
+
+    // Safety fallback: if no pipelines arrive within 4 seconds, release loading state
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+    }
+    loadingTimeoutRef.current = setTimeout(() => {
+      if (activeWorkspaceIdRef.current === targetWorkspaceId) {
+        setIsLoading(false);
+      }
+    }, 4000);
 
     // Initial snapshot fetch
     fetchSnapshot(targetWorkspaceId, dateFilterRef.current);
@@ -143,27 +176,29 @@ export function useWorkspaceMonitoring(
         const message = JSON.parse(event.data);
         if (message.type === 'FULL_SNAPSHOT') {
           if (message.workspaceId === targetWorkspaceId) {
+            if (loadingTimeoutRef.current) {
+              clearTimeout(loadingTimeoutRef.current);
+              loadingTimeoutRef.current = null;
+            }
             // Only update tree from live socket if on 'latest' view
             if (!dateFilterRef.current?.preset || dateFilterRef.current?.preset === 'latest') {
               const incoming = message.data || [];
-              if (incoming.length > 0) {
-                setPipelineTree(incoming);
-                const running = incoming.filter((p) => ['inprogress', 'running'].includes((p.status || '').toLowerCase())).length;
-                const succeeded = incoming.filter((p) => ['completed', 'succeeded', 'success'].includes((p.status || '').toLowerCase())).length;
-                const failed = incoming.filter((p) => (p.status || '').toLowerCase() === 'failed').length;
-                const cancelled = incoming.filter((p) => ['cancelled', 'canceled'].includes((p.status || '').toLowerCase())).length;
-                const notRun = incoming.filter((p) => ['no runs', 'noruns', 'notstarted', 'never executed', 'not run'].includes((p.status || '').toLowerCase())).length;
-                setMetrics({
-                  total: incoming.length,
-                  running,
-                  succeeded,
-                  failed,
-                  cancelled,
-                  notRun,
-                  scheduled: 0,
-                  notScheduled: 0,
-                });
-              }
+              setPipelineTree(incoming);
+              const running = incoming.filter((p) => ['inprogress', 'running'].includes((p.status || '').toLowerCase())).length;
+              const succeeded = incoming.filter((p) => ['completed', 'succeeded', 'success'].includes((p.status || '').toLowerCase())).length;
+              const failed = incoming.filter((p) => (p.status || '').toLowerCase() === 'failed').length;
+              const cancelled = incoming.filter((p) => ['cancelled', 'canceled'].includes((p.status || '').toLowerCase())).length;
+              const notRun = incoming.filter((p) => ['no runs', 'noruns', 'notstarted', 'never executed', 'not run'].includes((p.status || '').toLowerCase())).length;
+              setMetrics({
+                total: incoming.length,
+                running,
+                succeeded,
+                failed,
+                cancelled,
+                notRun,
+                scheduled: 0,
+                notScheduled: 0,
+              });
               setLastUpdated(message.timestamp || new Date().toISOString());
               setViewersCount(message.viewersCount || 1);
               setIsLoading(false);
@@ -244,6 +279,10 @@ export function useWorkspaceMonitoring(
     connectToWorkspace(workspaceId);
 
     return () => {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
       if (abortControllerRef.current) abortControllerRef.current.abort();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) {
@@ -254,10 +293,14 @@ export function useWorkspaceMonitoring(
     };
   }, [workspaceId, connectToWorkspace]);
 
-  // Re-fetch snapshot when dateFilter changes
+  // Re-fetch snapshot only when dateFilter actually changes
   useEffect(() => {
-    if (workspaceId) {
-      fetchSnapshot(workspaceId, dateFilter);
+    const key = `${dateFilter.preset}_${dateFilter.startDate}_${dateFilter.endDate}`;
+    if (key !== prevFilterKeyRef.current) {
+      prevFilterKeyRef.current = key;
+      if (workspaceId) {
+        fetchSnapshot(workspaceId, dateFilter);
+      }
     }
   }, [workspaceId, dateFilter.preset, dateFilter.startDate, dateFilter.endDate, fetchSnapshot]);
 

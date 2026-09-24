@@ -112,54 +112,90 @@ class DirectoryService:
         select_fields = "id,displayName,userPrincipalName,mail,jobTitle,department"
         
         async with httpx.AsyncClient(timeout=10.0) as client:
-            headers = {"Authorization": f"Bearer {token}"}
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "ConsistencyLevel": "eventual",
+            }
             try:
+                raw_users = []
                 if clean_q:
-                    # Escape single quotes in OData query
-                    safe_q = clean_q.replace("'", "''")
-                    # Graph filter supporting startsWith on displayName, mail, or userPrincipalName
-                    filter_expr = (
-                        f"startswith(displayName, '{safe_q}') or "
-                        f"startswith(mail, '{safe_q}') or "
-                        f"startswith(userPrincipalName, '{safe_q}')"
-                    )
-                    encoded_filter = urllib.parse.quote(filter_expr)
-                    url = f"https://graph.microsoft.com/v1.0/users?$filter={encoded_filter}&$select={select_fields}&$top={top}"
+                    # 1. Advanced Graph $search (supports token/substring matching across words, e.g. "malik")
+                    terms = [t.strip().replace('"', '') for t in clean_q.split() if t.strip()]
+                    if terms:
+                        clauses = [
+                            f'("displayName:{t}" OR "mail:{t}" OR "userPrincipalName:{t}")'
+                            for t in terms
+                        ]
+                        search_expr = " AND ".join(clauses)
+                        encoded_search = urllib.parse.quote(search_expr)
+                        search_url = (
+                            f"https://graph.microsoft.com/v1.0/users?$search={encoded_search}"
+                            f"&$select={select_fields}&$top={top}"
+                        )
+                        resp = await client.get(search_url, headers=headers)
+                        if resp.status_code == 200:
+                            raw_users = resp.json().get("value", [])
+
+                    # 2. Fallback to startswith filter if $search returned nothing
+                    if not raw_users:
+                        safe_q = clean_q.replace("'", "''")
+                        filter_expr = (
+                            f"startswith(displayName, '{safe_q}') or "
+                            f"startswith(mail, '{safe_q}') or "
+                            f"startswith(userPrincipalName, '{safe_q}')"
+                        )
+                        encoded_filter = urllib.parse.quote(filter_expr)
+                        filter_url = (
+                            f"https://graph.microsoft.com/v1.0/users?$filter={encoded_filter}"
+                            f"&$select={select_fields}&$top={top}"
+                        )
+                        resp = await client.get(filter_url, headers=headers)
+                        if resp.status_code == 200:
+                            raw_users = resp.json().get("value", [])
+
+                    # 3. Final fallback: fetch top 100 users and filter in-memory
+                    if not raw_users:
+                        fb_url = f"https://graph.microsoft.com/v1.0/users?$select={select_fields}&$top=100"
+                        resp = await client.get(fb_url, headers=headers)
+                        if resp.status_code == 200:
+                            candidates = resp.json().get("value", [])
+                            q_lower = clean_q.lower()
+                            raw_users = [
+                                u for u in candidates
+                                if q_lower in (u.get("displayName") or "").lower()
+                                or q_lower in (u.get("mail") or "").lower()
+                                or q_lower in (u.get("userPrincipalName") or "").lower()
+                            ]
                 else:
                     url = f"https://graph.microsoft.com/v1.0/users?$select={select_fields}&$top={top}"
-
-                resp = await client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    logger.warning("Graph search returned status %d: %s", resp.status_code, resp.text)
-                    # If filter failed (e.g. some characters), fallback to top users and filter in-memory
-                    url = f"https://graph.microsoft.com/v1.0/users?$select={select_fields}&$top=50"
                     resp = await client.get(url, headers=headers)
+                    if resp.status_code == 200:
+                        raw_users = resp.json().get("value", [])
 
-                if resp.status_code == 200:
-                    raw_users = resp.json().get("value", [])
-                    results = []
-                    for u in raw_users:
-                        display_name = u.get("displayName") or ""
-                        email = (u.get("mail") or u.get("userPrincipalName") or "").lower()
-                        upn = u.get("userPrincipalName") or ""
-                        
-                        # In-memory filter check if clean_q was passed
-                        if clean_q:
-                            q_lower = clean_q.lower()
-                            if not (q_lower in display_name.lower() or q_lower in email or q_lower in upn.lower()):
-                                continue
+                # Deduplicate and format user objects
+                results = []
+                seen_ids = set()
+                for u in raw_users:
+                    uid = u.get("id") or (u.get("mail") or u.get("userPrincipalName") or "").lower()
+                    if uid in seen_ids:
+                        continue
+                    seen_ids.add(uid)
 
-                        results.append({
-                            "id": u.get("id"),
-                            "displayName": display_name or email,
-                            "email": email,
-                            "userPrincipalName": upn,
-                            "jobTitle": u.get("jobTitle") or "",
-                            "department": u.get("department") or "",
-                            "initials": _get_initials(display_name, email),
-                        })
+                    display_name = u.get("displayName") or ""
+                    email = (u.get("mail") or u.get("userPrincipalName") or "").lower()
+                    upn = u.get("userPrincipalName") or ""
 
-                    return results[:top]
+                    results.append({
+                        "id": u.get("id"),
+                        "displayName": display_name or email,
+                        "email": email,
+                        "userPrincipalName": upn,
+                        "jobTitle": u.get("jobTitle") or "",
+                        "department": u.get("department") or "",
+                        "initials": _get_initials(display_name, email),
+                    })
+
+                return results[:top]
 
             except Exception as exc:
                 logger.error("Error querying Microsoft Graph users: %s", exc)

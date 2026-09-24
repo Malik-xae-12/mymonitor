@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import time
 import json
 import logging
 from typing import Dict, List, Any, Set, Optional
@@ -18,11 +19,14 @@ class LeasedWorkspacePoller:
     - Recursive activity and sub-pipeline execution tracing (Zero orphan rows).
     - Permanent caching of terminal runs and activity telemetry.
     - SLA Incident detection and automated L1/L2 escalation.
+    - Differential per-pipeline polling: Active (3.5s) for running, Relaxed (15.0s) for succeeded.
     """
     def __init__(self):
         self._is_running = False
         self._task: Optional[asyncio.Task] = None
         self._sync_in_progress: Set[str] = set()
+        self._active_sync_tasks: Dict[str, asyncio.Task] = {}
+        self._last_instance_check: Dict[str, float] = {}
 
     def start(self):
         if not self._is_running:
@@ -197,8 +201,17 @@ class LeasedWorkspacePoller:
         - Triggers L1 alerting for failures.
         """
         if workspace_id in self._sync_in_progress and not force_sync:
+            # If a sync task is actively running, await it so caller gets the newly loaded tree
+            if workspace_id in self._active_sync_tasks:
+                try:
+                    await self._active_sync_tasks[workspace_id]
+                except Exception:
+                    pass
             return await db_service.get_workspace_latest_tree(workspace_id)
 
+        cur_task = asyncio.current_task()
+        if cur_task:
+            self._active_sync_tasks[workspace_id] = cur_task
         self._sync_in_progress.add(workspace_id)
         try:
             now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -212,38 +225,58 @@ class LeasedWorkspacePoller:
             pipeline_names = {p.get("id"): p.get("displayName") for p in pipelines}
             await db_service.save_pipelines(workspace_id, pipelines, now_iso)
 
-            # 2. Concurrently fetch recent job instances for each pipeline
+            # 2. Concurrently fetch recent job instances for pipelines due for check:
+            # - Pipelines actively InProgress are checked every fast cycle (3.5s).
+            # - Pipelines already Succeeded/Failed/Idle are checked on the relaxed schedule (15.0s).
+            latest_cached = await db_service.get_workspace_latest_tree(workspace_id)
+            known_status_by_pid = {p.get("pipelineId"): str(p.get("status") or "").lower() for p in latest_cached}
+
             semaphore = asyncio.Semaphore(settings.MAX_PARALLEL_FABRIC_REQUESTS)
+            now_ts = time.time()
 
-            async def _fetch_instances(p: Dict[str, Any]) -> List[Dict[str, Any]]:
+            pipelines_to_query = []
+            for p in pipelines:
                 pid = p.get("id")
-                p_name = p.get("displayName")
-                async with semaphore:
-                    instances = await fabric_client.get_job_instances(workspace_id, pid)
-                if instances:
-                    for inst in instances:
-                        inst["pipelineId"] = pid
-                        inst["pipelineName"] = p_name
-                    return instances
-                else:
-                    return [{
-                        "id": f"norun-{pid}",
-                        "pipelineId": pid,
-                        "pipelineName": p_name,
-                        "itemId": pid,
-                        "itemDisplayName": p_name,
-                        "status": "No Runs",
-                        "startTime": None,
-                        "endTime": None,
-                        "durationInMs": 0,
-                        "invokeType": "None"
-                    }]
+                last_st = known_status_by_pid.get(pid, "")
+                is_running = last_st in ("inprogress", "running")
+                last_chk = self._last_instance_check.get(f"{workspace_id}:{pid}", 0)
+                elapsed = now_ts - last_chk
 
-            instance_batches = await asyncio.gather(*[_fetch_instances(p) for p in pipelines], return_exceptions=False)
-            all_runs: List[Dict[str, Any]] = [inst for batch in instance_batches for inst in batch]
+                if force_sync or is_running or (elapsed >= settings.POLL_INTERVAL_IDLE_SECONDS):
+                    pipelines_to_query.append(p)
+                    self._last_instance_check[f"{workspace_id}:{pid}"] = now_ts
 
-            # 3. Save discovered runs
-            await db_service.save_pipeline_runs(workspace_id, all_runs, now_iso)
+            all_runs: List[Dict[str, Any]] = []
+            if pipelines_to_query:
+                async def _fetch_instances(p: Dict[str, Any]) -> List[Dict[str, Any]]:
+                    pid = p.get("id")
+                    p_name = p.get("displayName")
+                    async with semaphore:
+                        instances = await fabric_client.get_job_instances(workspace_id, pid)
+                    if instances:
+                        for inst in instances:
+                            inst["pipelineId"] = pid
+                            inst["pipelineName"] = p_name
+                        return instances
+                    else:
+                        return [{
+                            "id": f"norun-{pid}",
+                            "pipelineId": pid,
+                            "pipelineName": p_name,
+                            "itemId": pid,
+                            "itemDisplayName": p_name,
+                            "status": "No Runs",
+                            "startTime": None,
+                            "endTime": None,
+                            "durationInMs": 0,
+                            "invokeType": "None"
+                        }]
+
+                instance_batches = await asyncio.gather(*[_fetch_instances(p) for p in pipelines_to_query], return_exceptions=False)
+                all_runs = [inst for batch in instance_batches for inst in batch]
+
+                # 3. Save discovered runs
+                await db_service.save_pipeline_runs(workspace_id, all_runs, now_iso)
 
             # 4. For master pipelines (or runs with activities needed), recursively fetch activity trees
             if force_sync:
@@ -324,6 +357,7 @@ class LeasedWorkspacePoller:
             return await db_service.get_workspace_latest_tree(workspace_id)
         finally:
             self._sync_in_progress.discard(workspace_id)
+            self._active_sync_tasks.pop(workspace_id, None)
 
     async def _sync_schedules(self, workspace_id: str, pipelines: List[Dict[str, Any]], updated_at: str):
         """Fetches pipeline schedules and persists to SQLite."""
@@ -400,11 +434,15 @@ class LeasedWorkspacePoller:
                     await asyncio.sleep(2.0)
                     continue
 
+                has_any_running = False
                 for ws_id in active_workspaces:
                     snapshot = await self.sync_workspace_with_fabric(ws_id)
                     if not snapshot:
                         snapshot = await db_service.get_workspace_latest_tree(ws_id)
                     
+                    if any(str(p.get("status", "")).lower() in ("inprogress", "running") for p in (snapshot or [])):
+                        has_any_running = True
+
                     message = {
                         "type": "FULL_SNAPSHOT",
                         "workspaceId": ws_id,
@@ -414,7 +452,10 @@ class LeasedWorkspacePoller:
                     }
                     await connection_manager.broadcast_to_workspace(ws_id, message)
 
-                await asyncio.sleep(settings.POLL_INTERVAL_ACTIVE_SECONDS)
+                # Adaptive sleep: Fast polling (3.5s) when workloads are actively InProgress,
+                # Relaxed polling (15.0s) when all pipelines are Succeeded/Idle to conserve Fabric API quotas.
+                sleep_interval = settings.POLL_INTERVAL_ACTIVE_SECONDS if has_any_running else settings.POLL_INTERVAL_IDLE_SECONDS
+                await asyncio.sleep(sleep_interval)
 
             except asyncio.CancelledError:
                 break

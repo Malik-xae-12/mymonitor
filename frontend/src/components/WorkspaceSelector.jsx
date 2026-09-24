@@ -7,7 +7,8 @@ export default function WorkspaceSelector({
   workspaces: propWorkspaces,
   align = 'left',
   buttonClassName = '',
-  placeholder = "Select Workspace..."
+  placeholder = "Select Workspace...",
+  isLoadingPipelines = false
 }) {
   const [workspaces, setWorkspaces] = useState(propWorkspaces || []);
   const [isOpen, setIsOpen] = useState(false);
@@ -83,7 +84,11 @@ export default function WorkspaceSelector({
       >
         <div className="flex items-center gap-2 truncate">
           <div className="w-4 h-4 rounded flex items-center justify-center bg-[#eff6fc] text-[#0f6cbd] shrink-0">
-            <Box className="w-3 h-3" />
+            {isLoadingPipelines ? (
+              <RefreshCw className="w-3 h-3 text-[#0f6cbd] animate-spin" />
+            ) : (
+              <Box className="w-3 h-3" />
+            )}
           </div>
           <span className="truncate text-xs font-normal text-[#242424]">
             {activeName}

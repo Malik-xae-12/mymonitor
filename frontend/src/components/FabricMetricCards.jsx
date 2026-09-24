@@ -13,7 +13,8 @@ export default function FabricMetricCards({
   metrics = {},
   statusFilter = 'ALL',
   onStatusFilterChange,
-  isFuture = false
+  isFuture = false,
+  isLoading = false
 }) {
   if (isFuture) {
     const futureCards = [
@@ -49,7 +50,11 @@ export default function FabricMetricCards({
                     {card.label}
                   </div>
                   <div className="text-base font-bold font-mono text-[#242424] mt-0.5">
-                    {card.count}
+                    {isLoading ? (
+                      <div className="h-5 w-8 bg-[#edebe9] rounded animate-pulse" />
+                    ) : (
+                      card.count
+                    )}
                   </div>
                 </div>
               </div>
@@ -104,7 +109,11 @@ export default function FabricMetricCards({
                 {card.label}
               </div>
               <div className="text-base font-bold font-mono text-[#242424] mt-0.5">
-                {card.count}
+                {isLoading ? (
+                  <div className="h-5 w-8 bg-[#edebe9] rounded animate-pulse" />
+                ) : (
+                  card.count
+                )}
               </div>
             </div>
 

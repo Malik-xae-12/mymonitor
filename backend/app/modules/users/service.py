@@ -1,6 +1,7 @@
 """Business logic for users & roles."""
 from typing import List, Optional, Tuple
 
+import aiosqlite
 from backend.app.modules.users.models import DEFAULT_ROLES, ROLE_ADMIN
 from backend.app.modules.users.repository import users_repository
 from backend.app.modules.users.schema import RoleResponse, UserResponse
@@ -26,21 +27,35 @@ class UsersService:
         role is derived from workspace assignments (L1/L2), falling back to any stored
         role on the user record.
         """
-        e = (email or "").lower()
+        e = (email or "").strip().lower()
         user = await users_repository.get_by_email(e)
-        assignments = await db_service.get_assignments_for_user(e)
-        workspace_ids = [a["workspace_id"] for a in assignments]
 
         if user and user.get("role_id") == ROLE_ADMIN:
             return ROLE_ADMIN, True, []  # admins are unscoped (see all workspaces)
 
+        # Get all workspaces assigned via workspace_assignments OR sla_configs
+        workspace_ids = await db_service.get_assigned_workspace_ids_for_user(e)
+
         role = "none"
+        assignments = await db_service.get_assignments_for_user(e)
         for a in assignments:
-            if (a.get("l1_email") or "").lower() == e:
+            if (a.get("l1_email") or "").strip().lower() == e:
                 role = "l1"
                 break
-            if (a.get("l2_email") or "").lower() == e:
+            if (a.get("l2_email") or "").strip().lower() == e:
                 role = "l2"
+
+        # If not determined from workspace_assignments, check per-pipeline sla_configs
+        if role == "none":
+            async with aiosqlite.connect(db_service.db_path) as db:
+                c1 = await db.execute("SELECT 1 FROM sla_configs WHERE LOWER(l1_email) = ? LIMIT 1", (e,))
+                if await c1.fetchone():
+                    role = "l1"
+                else:
+                    c2 = await db.execute("SELECT 1 FROM sla_configs WHERE LOWER(l2_email) = ? LIMIT 1", (e,))
+                    if await c2.fetchone():
+                        role = "l2"
+
         if role == "none" and user and user.get("role_id") in ("l1", "l2"):
             role = user["role_id"]
 

@@ -73,17 +73,41 @@ class FabricClient:
         return await rate_limiter.run(_call())
 
     async def get_pipelines(self, workspace_id: str) -> List[Dict[str, Any]]:
-        """List all Data Pipelines inside a workspace."""
+        """List all Data Pipelines inside a workspace, searching workspace folders recursively if nested."""
         headers = await self._get_headers()
         url = f"{self.base_url}/workspaces/{workspace_id}/items?type=DataPipeline"
 
         async def _call():
             try:
+                pipelines = []
+                seen_ids = set()
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     res = await client.get(url, headers=headers)
                     if res.status_code == 200:
-                        return res.json().get("value", [])
-                    return []
+                        for p in res.json().get("value", []):
+                            if p.get("id") and p["id"] not in seen_ids:
+                                seen_ids.add(p["id"])
+                                pipelines.append(p)
+
+                    # If flat listing found nothing or workspace has folders, check inside folders
+                    try:
+                        folders_res = await client.get(f"{self.base_url}/workspaces/{workspace_id}/folders", headers=headers)
+                        if folders_res.status_code == 200:
+                            folders = folders_res.json().get("value", [])
+                            for f in folders:
+                                fid = f.get("id")
+                                if fid:
+                                    f_items_url = f"{self.base_url}/workspaces/{workspace_id}/items?type=DataPipeline&folderId={fid}"
+                                    f_res = await client.get(f_items_url, headers=headers)
+                                    if f_res.status_code == 200:
+                                        for p in f_res.json().get("value", []):
+                                            if p.get("id") and p["id"] not in seen_ids:
+                                                seen_ids.add(p["id"])
+                                                pipelines.append(p)
+                    except Exception as fe:
+                        logger.debug(f"Could not search folders for pipelines in {workspace_id}: {fe}")
+
+                    return pipelines
             except Exception as e:
                 logger.warning(f"Failed to get pipelines for {workspace_id}: {e}")
                 return []

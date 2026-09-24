@@ -18,6 +18,7 @@ backend/data/*.db-wal
 backend/data/*.db-shm
 *.db
 *.sqlite3
+next-fastapi-starter/
 
 # Frontend dependencies & build output
 frontend/node_modules/

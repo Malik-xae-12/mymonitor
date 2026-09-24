@@ -42,6 +42,13 @@ async def add_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Support role must be 'l1' or 'l2'",
         )
+    # Check if target is admin
+    target = await users_service.resolve_access(payload.email)
+    if target[1]:  # is_admin
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{payload.email} is an Administrator and cannot be demoted to support staff.",
+        )
     await users_service.add_or_update_user(
         email=payload.email,
         display_name=payload.display_name or "",

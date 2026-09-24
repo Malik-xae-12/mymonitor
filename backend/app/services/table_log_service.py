@@ -3,7 +3,8 @@ import json
 import logging
 import asyncio
 import datetime
-from typing import List, Dict, Any, Optional
+import time
+from typing import List, Dict, Any, Optional, Set
 import httpx
 import pyodbc
 
@@ -23,21 +24,54 @@ class TableLogService:
         """
         Lists all Warehouses and Lakehouses inside the selected workspace
         by querying the Microsoft Fabric REST API.
+        Dynamically searches inside workspace folders when the flat listing
+        returns nothing (Fabric nests items inside folder hierarchies).
+        Falls back to the saved mapping artifact as a last resort.
         """
         headers = await fabric_client._get_headers()
         artifacts = []
+        seen_ids: Set[str] = set()
 
-        # 1. Fetch Warehouses
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Try the flat /warehouses and /lakehouses endpoints first
+            await self._fetch_warehouses(client, headers, workspace_id, artifacts, seen_ids)
+            await self._fetch_lakehouses(client, headers, workspace_id, artifacts, seen_ids)
+
+            # 2. If flat listing found nothing, search inside workspace folders
+            if not artifacts:
+                logger.info(f"No artifacts from flat listing for workspace {workspace_id}. Searching folders...")
+                await self._search_folders_for_artifacts(client, headers, workspace_id, artifacts, seen_ids)
+
+        # 3. Final fallback: include any previously saved mapping
+        if not artifacts:
+            saved = await db_service.get_table_log_mapping(workspace_id)
+            if saved and saved.get("artifact_id") and saved["artifact_id"] not in seen_ids:
+                artifacts.append({
+                    "id": saved["artifact_id"],
+                    "displayName": saved.get("artifact_name", "Saved Data Source"),
+                    "type": saved.get("artifact_type", "Warehouse"),
+                    "description": "(Previously configured – not visible via REST API)",
+                    "serverFqdn": saved.get("server_fqdn"),
+                    "databaseName": saved.get("database_name")
+                })
+
+        return artifacts
+
+    async def _fetch_warehouses(self, client: httpx.AsyncClient, headers: dict,
+                                workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """Fetches warehouses from the flat /warehouses endpoint."""
         wh_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/warehouses"
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.get(wh_url, headers=headers)
-                if res.status_code == 200:
-                    for wh in res.json().get("value", []):
-                        props = wh.get("properties", {})
-                        conn_str = props.get("connectionString") or props.get("connectionInfo")
+            res = await client.get(wh_url, headers=headers)
+            if res.status_code == 200:
+                for wh in res.json().get("value", []):
+                    props = wh.get("properties", {})
+                    conn_str = props.get("connectionString") or props.get("connectionInfo")
+                    aid = wh.get("id")
+                    if aid not in seen_ids:
+                        seen_ids.add(aid)
                         artifacts.append({
-                            "id": wh.get("id"),
+                            "id": aid,
                             "displayName": wh.get("displayName"),
                             "type": "Warehouse",
                             "description": wh.get("description", ""),
@@ -47,18 +81,22 @@ class TableLogService:
         except Exception as e:
             logger.warning(f"Failed to fetch warehouses for workspace {workspace_id}: {e}")
 
-        # 2. Fetch Lakehouses
+    async def _fetch_lakehouses(self, client: httpx.AsyncClient, headers: dict,
+                                workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """Fetches lakehouses from the flat /lakehouses endpoint."""
         lh_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/lakehouses"
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.get(lh_url, headers=headers)
-                if res.status_code == 200:
-                    for lh in res.json().get("value", []):
-                        props = lh.get("properties", {})
-                        sql_props = props.get("sqlEndpointProperties", {})
-                        conn_str = sql_props.get("connectionString")
+            res = await client.get(lh_url, headers=headers)
+            if res.status_code == 200:
+                for lh in res.json().get("value", []):
+                    props = lh.get("properties", {})
+                    sql_props = props.get("sqlEndpointProperties", {})
+                    conn_str = sql_props.get("connectionString")
+                    aid = lh.get("id")
+                    if aid not in seen_ids:
+                        seen_ids.add(aid)
                         artifacts.append({
-                            "id": lh.get("id"),
+                            "id": aid,
                             "displayName": lh.get("displayName"),
                             "type": "Lakehouse",
                             "description": lh.get("description", ""),
@@ -68,7 +106,83 @@ class TableLogService:
         except Exception as e:
             logger.warning(f"Failed to fetch lakehouses for workspace {workspace_id}: {e}")
 
-        return artifacts
+    async def _search_folders_for_artifacts(self, client: httpx.AsyncClient, headers: dict,
+                                            workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """
+        Dynamically discovers Warehouses and Lakehouses nested inside workspace folders.
+        Fabric workspaces can organize items in folder hierarchies; the flat /warehouses
+        and /lakehouses endpoints don't return items inside folders.
+        """
+        try:
+            # Get all folders in the workspace
+            folders_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/folders"
+            res = await client.get(folders_url, headers=headers)
+            if res.status_code != 200:
+                return
+
+            folders = res.json().get("value", [])
+            if not folders:
+                return
+
+            # For each folder, query items filtered by Warehouse and Lakehouse types
+            for folder in folders:
+                folder_id = folder.get("id")
+                folder_name = folder.get("displayName", "")
+                if not folder_id:
+                    continue
+
+                for item_type in ["Warehouse", "Lakehouse"]:
+                    try:
+                        items_url = (
+                            f"{fabric_client.base_url}/workspaces/{workspace_id}"
+                            f"/items?type={item_type}&folderId={folder_id}"
+                        )
+                        item_res = await client.get(items_url, headers=headers)
+                        if item_res.status_code == 200:
+                            for item in item_res.json().get("value", []):
+                                aid = item.get("id")
+                                if aid and aid not in seen_ids:
+                                    seen_ids.add(aid)
+                                    # For items found in folders, we need to fetch
+                                    # the connection string from the type-specific endpoint
+                                    conn_str = await self._get_artifact_connection(
+                                        client, headers, workspace_id, aid, item_type
+                                    )
+                                    artifacts.append({
+                                        "id": aid,
+                                        "displayName": item.get("displayName"),
+                                        "type": item_type,
+                                        "description": item.get("description", f"Found in folder: {folder_name}"),
+                                        "serverFqdn": conn_str,
+                                        "databaseName": item.get("displayName")
+                                    })
+                    except Exception as e:
+                        logger.debug(f"Error querying {item_type} in folder {folder_name}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to search folders for artifacts in workspace {workspace_id}: {e}")
+
+    async def _get_artifact_connection(self, client: httpx.AsyncClient, headers: dict,
+                                       workspace_id: str, artifact_id: str,
+                                       artifact_type: str) -> Optional[str]:
+        """Fetches the SQL connection string for a specific warehouse or lakehouse by ID."""
+        try:
+            if artifact_type == "Warehouse":
+                url = f"{fabric_client.base_url}/workspaces/{workspace_id}/warehouses/{artifact_id}"
+                res = await client.get(url, headers=headers)
+                if res.status_code == 200:
+                    props = res.json().get("properties", {})
+                    return props.get("connectionString") or props.get("connectionInfo")
+            elif artifact_type == "Lakehouse":
+                url = f"{fabric_client.base_url}/workspaces/{workspace_id}/lakehouses/{artifact_id}"
+                res = await client.get(url, headers=headers)
+                if res.status_code == 200:
+                    props = res.json().get("properties", {})
+                    sql_props = props.get("sqlEndpointProperties", {})
+                    return sql_props.get("connectionString")
+        except Exception as e:
+            logger.debug(f"Could not fetch connection for {artifact_type} {artifact_id}: {e}")
+        return None
 
     def _get_driver_name(self) -> str:
         """
@@ -90,6 +204,8 @@ class TableLogService:
     def _get_pyodbc_connection(self, server_fqdn: str, database_name: str) -> pyodbc.Connection:
         """
         Establishes an ODBC connection to the Fabric SQL Endpoint using ActiveDirectoryServicePrincipal.
+        Includes retry logic with exponential backoff for transient Azure errors
+        (e.g., "Couldn't complete the operation due to a system update").
         """
         driver = self._get_driver_name()
         server = server_fqdn.strip()
@@ -107,11 +223,31 @@ class TableLogService:
             f"Connection Timeout=30;"
         )
 
-        try:
-            return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=no;")
-        except Exception as e:
-            logger.warning(f"Connection with TrustServerCertificate=no failed: {e}. Retrying with TrustServerCertificate=yes...")
-            return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=yes;")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=no;")
+            except Exception as e:
+                err_msg = str(e)
+                is_transient = "system update" in err_msg.lower() or "18456" in err_msg
+                if attempt == 0:
+                    # First failure: try with TrustServerCertificate=yes
+                    logger.warning(f"Connection attempt {attempt + 1} failed: {e}. Retrying with TrustServerCertificate=yes...")
+                    try:
+                        return pyodbc.connect(f"{base_conn_str}TrustServerCertificate=yes;")
+                    except Exception as e2:
+                        if is_transient and attempt < max_retries - 1:
+                            wait_secs = 2 ** (attempt + 1)  # 2, 4 seconds
+                            logger.warning(f"Transient error on attempt {attempt + 1}: {e2}. Retrying in {wait_secs}s...")
+                            time.sleep(wait_secs)
+                            continue
+                        raise
+                elif is_transient and attempt < max_retries - 1:
+                    wait_secs = 2 ** (attempt + 1)
+                    logger.warning(f"Transient error on attempt {attempt + 1}: {e}. Retrying in {wait_secs}s...")
+                    time.sleep(wait_secs)
+                else:
+                    raise
 
     async def get_schemas_and_tables(self, server_fqdn: str, database_name: str) -> List[Dict[str, str]]:
         """
@@ -507,13 +643,36 @@ class TableLogService:
         br_err_col = br_map.get("error_message_col")
         br_dur_col = br_map.get("duration_col")
 
+        def is_status_success(status_raw: str, err_raw: str) -> bool:
+            s = safe_str(status_raw).lower()
+            e = safe_str(err_raw).lower()
+
+            # Explicit failure keywords in status
+            if any(f in s for f in ["fail", "error", "abort", "exception", "cancel"]):
+                return False
+
+            # Check if there is a real error message
+            has_real_error = bool(
+                e and 
+                e not in ["no error", "none", "null", "0", "no errors", "success", "na", "n/a", ""] and 
+                "no error" not in e
+            )
+            if has_real_error:
+                return False
+
+            # Explicit success keywords in status (e.g. "Success", "Archive Success", "Succeeded", "Completed")
+            if any(w in s for w in ["success", "succeed", "complete", "done", "ok"]):
+                return True
+
+            return not has_real_error
+
         for r in active_bronze_rows:
             st = safe_str(r.get(br_st_col)) if br_st_col else ""
             et = safe_str(r.get(br_et_col)) if br_et_col else ""
             dur_sec = parse_duration_seconds(r.get(br_dur_col) if br_dur_col else None, st, et)
             status_val = safe_str(r.get(br_sts_col)) if br_sts_col else "Success"
             err_val = safe_str(r.get(br_err_col)) if br_err_col else "No Error"
-            is_success = status_val.lower() in ["success", "succeeded", "completed"] and (err_val == "No Error" or not err_val)
+            is_success = is_status_success(status_val, err_val)
             
             tbl_name, sch_name = resolve_table_and_schema(r.get(br_tbl_col) if br_tbl_col else "", r.get(br_sch_col) if br_sch_col else "dbo", r)
             op_name = safe_str(r.get(br_src_col) or "Data Load")
@@ -550,7 +709,7 @@ class TableLogService:
             dur_sec = parse_duration_seconds(r.get(sl_dur_col) if sl_dur_col else None, st, et)
             status_val = safe_str(r.get(sl_sts_col)) if sl_sts_col else "Success"
             err_val = safe_str(r.get(sl_err_col)) if sl_err_col else "No Error"
-            is_success = status_val.lower() in ["success", "succeeded", "completed"] and (err_val == "No Error" or not err_val or err_val == "")
+            is_success = is_status_success(status_val, err_val)
             
             cnt = parse_row_count(r.get(sl_cnt_col)) if sl_cnt_col else 0
             tbl_name, sch_name = resolve_table_and_schema(r.get(sl_tbl_col) if sl_tbl_col else "", r.get(sl_sch_col) if sl_sch_col else "dbo", r)

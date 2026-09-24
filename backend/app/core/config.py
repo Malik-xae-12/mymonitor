@@ -1,68 +1,117 @@
-import os
 from pathlib import Path
+import json
+import os
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Root directory of RealPOC
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_app_dir = Path(__file__).resolve().parent.parent
+_backend_dir = _app_dir.parent
+_root_dir = _backend_dir.parent
+
 
 class Settings(BaseSettings):
-    AZURE_TENANT_ID: str
-    AZURE_CLIENT_ID: str 
-    AZURE_CLIENT_SECRET: str 
+    # OpenAPI docs
+    OPENAPI_OUTPUT_FILE: str | None = None
 
-    # Microsoft Entra ID (Azure AD) sign-in / RBAC.
-    # These identify the SPA app registration used for user sign-in and token validation.
-    # May differ from the Fabric Service Principal above.
-    AZURE_AD_TENANT_ID: str = "008502d6-3f79-46f0-ab37-9354e3fe80ff"
-    AZURE_AD_CLIENT_ID: str = "25ad11d7-5885-4f0e-8424-919bf02e04eb"
-    # Azure AD Service Principal for selecting people / users (Microsoft Graph)
-    USERS_AZURE_AD_CLIENT_SECRET: str = "m1N8Q~tpbpecTl-wipABz2KMkRJI0LBJpSB.xaBI"
-    USERS_AZURE_AD_CLIENT_ID: str = "6eafc8c7-0d3f-4d8a-b8c1-308384cb6829"
-    USERS_AZURE_AD_TENANT_ID: str = "008502d6-3f79-46f0-ab37-9354e3fe80ff"
-
-    # Comma-separated list of bootstrap admin emails (case-insensitive).
-    ADMIN_EMAILS: str = ""
-    # When False, backend skips token validation (local dev only). Keep True in real use.
+    # Environment
+    PROD: bool = False
     AUTH_ENABLED: bool = True
 
-    # JWT & Auth Settings (aligned with next-fastapi-starter architecture)
-    ACCESS_SECRET_KEY: str = "fabric-monitor-jwt-secret-key-2026"
-    REFRESH_SECRET_KEY: str = "fabric-monitor-refresh-secret-key-2026"
-    RESET_PASSWORD_SECRET_KEY: str = "fabric-monitor-reset-secret-key-2026"
-    VERIFICATION_SECRET_KEY: str = "fabric-monitor-verification-secret-key-2026"
+    # Database
+    DATABASE_URL: str = "sqlite+aiosqlite:///./app.db"
+    PROD_DATABASE_URL: str | None = None
+    EXPIRE_ON_COMMIT: bool = False
+
+    # JWT Authentication & Authorization (Pre-built)
+    ACCESS_SECRET_KEY: str = "fabric-monitor-jwt-access-secret-2026"
+    REFRESH_SECRET_KEY: str = "fabric-monitor-jwt-refresh-secret-2026"
+    RESET_PASSWORD_SECRET_KEY: str = "fabric-monitor-jwt-reset-secret-2026"
+    VERIFICATION_SECRET_KEY: str = "fabric-monitor-jwt-verify-secret-2026"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_SECONDS: int = 3600  # 1 hour
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    POLL_INTERVAL_ACTIVE_SECONDS: float = 3.5
-    POLL_INTERVAL_IDLE_SECONDS: float = 15.0
+    # Token cleanup scheduler
+    TOKEN_CLEANUP_INTERVAL_HOURS: int = 6
+    TOKEN_CLEANUP_RETENTION_DAYS: int = 30
+
+    # Microsoft Fabric REST APIs (Service Principal)
+    AZURE_TENANT_ID: str = ""
+    AZURE_CLIENT_ID: str = ""
+    AZURE_CLIENT_SECRET: str = ""
+
+    # Microsoft Entra ID (Azure AD) – User Authentication / SSO / RBAC
+    AZURE_AD_TENANT_ID: str = ""
+    AZURE_AD_CLIENT_ID: str = ""
+    AZURE_AD_CLIENT_SECRET: str = ""
+    AZURE_AD_ISSUER: str = ""
+
+    # Microsoft Graph API Directory Service Credentials
+    USERS_AZURE_AD_TENANT_ID: str = ""
+    USERS_AZURE_AD_CLIENT_ID: str = ""
+    USERS_AZURE_AD_CLIENT_SECRET: str = ""
+
+    # SQLite Database for Real-Time Snapshot Cache & Telemetry
+    SQLITE_DB_PATH: str = "backend/data/fabric_monitor.db"
+
+    # Adaptive Dual-Speed Leased Polling Intervals (Seconds)
+    ACTIVE_POLL_INTERVAL: float = 3.5
+    IDLE_POLL_INTERVAL: float = 15.0
+    LEASE_EXPIRY_SECONDS: int = 30
+    RATE_LIMIT_DELAY: float = 0.05
+    MAX_CONCURRENT_REQUESTS: int = 5
     MAX_PARALLEL_FABRIC_REQUESTS: int = 5
-    
-    ALLOWED_ORIGINS: str = "*"
 
-    # Database
-    SQLITE_DB_PATH: str = str(BASE_DIR / "backend" / "data" / "fabric_monitor.db")
+    # Real-Time SLA Escalation & Incident Management
+    SLA_POLL_INTERVAL: int = 15
+    ALERT_COOLDOWN_MINUTES: int = 30
+    NOTIFICATION_EMAIL: str = "uiaptracker@gmail.com"
+    ALERT_EMAIL_PASSWORD: str = ""
+    ALERT_SMTP_HOST: str = "smtp.gmail.com"
+    ALERT_SMTP_PORT: int = 465
 
-    # SMTP Email Alerting Settings
-    MAIL_USERNAME: str = "uiaptracker@gmail.com"
-    MAIL_PASSWORD: str = ""
-    MAIL_FROM: str = "uiaptracker@gmail.com"
-    MAIL_PORT: int = 587
-    MAIL_SERVER: str = "smtp.gmail.com"
-    MAIL_STARTTLS: bool = True
-    MAIL_SSL_TLS: bool = False
-    USE_CREDENTIALS: bool = True
-    VALIDATE_CERTS: bool = True
+    # Role-Based Access Control Bootstrap (Comma-separated admin emails)
+    ADMIN_EMAILS: str = "mohammedabdulmalik.m@ubtiinc.com"
 
-    # Google Gemini AI Diagnostics
+    # AI Failure Diagnostics (Google Gemini 3.6 Flash)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
+    # Frontend URL & CORS
+    FRONTEND_URL: str = "http://localhost:5173"
+    ALLOWED_ORIGINS: str = "*"
+    CORS_ORIGINS: list[str] = ["*"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: str | list[str]) -> list[str]:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v or []
+
+    # Rate limiting (requests per minute)
+    RATE_LIMIT_LOGIN: str = "10/minute"
+    RATE_LIMIT_REFRESH: str = "20/minute"
+    RATE_LIMIT_SSO_EXCHANGE: str = "30/minute"
+
+    # CSRF
+    CSRF_SECRET: str | None = None
 
     model_config = SettingsConfigDict(
-        env_file=str(BASE_DIR / ".env"),
+        env_file=[
+            str(_root_dir / ".env"),
+            str(_backend_dir / ".env"),
+        ],
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
     )
 
-settings = Settings()
 
+settings = Settings()

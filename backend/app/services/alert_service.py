@@ -6,9 +6,9 @@ import json
 import logging
 import smtplib
 from typing import Dict, Any, Optional
-from backend.app.core.config import settings
-from backend.app.services.db_service import db_service
-from backend.app.services.connection_manager import connection_manager
+from app.core.config import settings
+from app.services.db_service import db_service
+from app.services.connection_manager import connection_manager
 
 logger = logging.getLogger("fabric_monitor.alert")
 

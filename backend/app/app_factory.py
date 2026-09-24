@@ -1,89 +1,121 @@
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from typing import List
 
-from backend.app.core.config import settings
-from backend.app.core.exceptions import register_exception_handlers
-from backend.app.services.leased_poller import leased_poller
-from backend.app.services.db_service import db_service
-from backend.app.services.alert_service import alert_service
-from backend.app.services.ai_diagnostic_service import ai_diagnostic_service
-from backend.app.api.routes_workspaces import router as workspaces_router, AiFixRequest
-from backend.app.api.websocket_hub import router as websocket_router
-from backend.app.modules.auth import auth_router
-from backend.app.modules.users import users_router, users_service
-from backend.app.api.routes_directory import router as directory_router
+from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
+from fastapi.staticfiles import StaticFiles
+from fastapi_pagination import add_pagination
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from app.core.config import settings
+from app.core.csrf import CSRFMiddleware
+from app.core.events import create_database
+from app.core.exceptions import register_exception_handlers
+from app.core.rate_limit import limiter
+from app.modules.admin.router import router as admin_router
+from app.modules.auth.router import router as auth_router
+from app.modules.diagnostics.router import router as diagnostics_router
+from app.modules.directory.router import router as directory_router
+from app.modules.pipelines.router import router as pipelines_router
+from app.modules.sla.router import router as sla_router
+from app.modules.table_logs.router import router as table_logs_router
+from app.modules.users.router import router as users_router
+from app.modules.users.service import users_service
+from app.modules.websocket.router import router as websocket_router
+from app.modules.workspaces.router import router as workspaces_router
+from app.services.alert_service import alert_service
+from app.services.db_service import db_service
+from app.services.leased_poller import leased_poller
+from app.shared.constants import AUTH_URL_PATH
 
 logger = logging.getLogger("fabric_monitor")
 
 
+def simple_generate_unique_route_id(route: APIRoute) -> str:
+    tags = route.tags if route.tags else ["default"]
+    return f"{tags[0]}-{route.name}"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize SQLite DB, background poller, and SLA alert monitor
-    logger.info("Initializing Microsoft Fabric Real-Time Monitoring Hub & SQLite DB...")
+    logger.info("Initializing Microsoft Fabric Real-Time Monitoring Hub...")
+    # 1. Initialize starter SQLite DB tables (users, roles, tokens, etc.)
+    await create_database()
+
+    # 2. Initialize Fabric Monitoring SQLite DB & seed admin users
     await db_service.init_db()
-    # Seed RBAC role catalog + bootstrap admin users from ADMIN_EMAILS.
     admin_emails = [e.strip() for e in (settings.ADMIN_EMAILS or "").split(",") if e.strip()]
     await users_service.seed_defaults(admin_emails)
+
+    # 3. Start background leased poller and alert service
     leased_poller.start()
     alert_service.start()
+    logger.info("Background leased poller and SLA alert monitor started.")
+
     yield
-    # Shutdown: Stop poller and alert service
+
+    # Shutdown: Stop poller and alert services cleanly
     logger.info("Shutting down Fabric Monitoring Hub...")
     leased_poller.stop()
     alert_service.stop()
 
 
 def create_app() -> FastAPI:
-    """Application factory function matching next-fastapi-starter clean architecture."""
     app = FastAPI(
         title="Microsoft Fabric Real-Time Monitoring Hub",
-        description="Real-time pipeline & activity monitoring for Microsoft Fabric with parent-child hierarchy and WebSockets",
+        description="Enterprise modular FastAPI backend for real-time Fabric pipeline monitoring, SLA alerting, and table telemetry",
         version="1.0.0",
+        generate_unique_id_function=simple_generate_unique_route_id,
+        openapi_url="/openapi.json",
         lifespan=lifespan,
     )
 
-    # CORS Middleware
-    origins = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]
-    if "*" in origins:
-        origins = ["*"]
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Calculate allowed CORS origins
+    cors_list: List[str] = []
+    if settings.CORS_ORIGINS:
+        cors_list.extend(list(settings.CORS_ORIGINS))
+    if hasattr(settings, "ALLOWED_ORIGINS") and settings.ALLOWED_ORIGINS:
+        cors_list.extend([o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()])
+    if settings.FRONTEND_URL and settings.FRONTEND_URL not in cors_list:
+        cors_list.append(settings.FRONTEND_URL)
+
+    if "*" in cors_list or not cors_list:
+        allowed_origins = ["*"]
+    else:
+        allowed_origins = list(set(cors_list))
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # Global Exception Handlers
-    register_exception_handlers(app)
+    app.add_middleware(CSRFMiddleware)
 
-    # Mount Domain & API Routers
-    app.include_router(auth_router)
-    app.include_router(users_router)
-    app.include_router(directory_router)
+    # 1. Register Core Domain Routers
+    app.include_router(admin_router)
     app.include_router(workspaces_router)
+    app.include_router(pipelines_router)
+    app.include_router(sla_router)
+    app.include_router(table_logs_router)
+    app.include_router(diagnostics_router)
+    app.include_router(directory_router)
     app.include_router(websocket_router)
 
-    # Global AI Failure Diagnostics Endpoint
-    @app.post("/api/diagnostics/ai-fix")
-    async def global_diagnose_pipeline_error(payload: AiFixRequest):
-        """Global endpoint to analyze failures using Google Gemini 3.6 Flash."""
-        return await ai_diagnostic_service.diagnose_failure(
-            pipeline_name=payload.pipelineName or "Pipeline",
-            activity_name=payload.activityName or "Activity",
-            activity_type=payload.activityType or "Execution",
-            error_code=payload.errorCode or "N/A",
-            error_message=payload.errorMessage,
-            failure_type=payload.failureType or "UserError",
-            target=payload.target or "",
-            raw_error=payload.rawError,
-            force_refresh=payload.forceRefresh or False,
-        )
+    # 2. Register Auth & User Routers under /api
+    api_router = APIRouter(prefix="/api")
+    api_router.include_router(auth_router, prefix=f"/{AUTH_URL_PATH}")
+    api_router.include_router(users_router, prefix="/users")
+    app.include_router(api_router)
 
     # Health Check Endpoint
     @app.get("/health")
@@ -95,10 +127,22 @@ def create_app() -> FastAPI:
             "poller_active": leased_poller._is_running,
         }
 
-    # Mount static build files from frontend/dist if available
-    frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
-    if frontend_dist.exists():
-        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    register_exception_handlers(app)
+    add_pagination(app)
+
+    # Mount static frontend build if present
+    base_path = Path(__file__).resolve()
+    potential_dist_paths = [
+        base_path.parent.parent.parent.parent / "frontend" / "dist",  # from next-fastapi-starter/backend/app
+        base_path.parent.parent.parent / "frontend" / "dist",         # from backend/app
+        Path.cwd() / "frontend" / "dist",
+    ]
+
+    for p in potential_dist_paths:
+        if p.exists() and (p / "index.html").exists():
+            logger.info("Mounting frontend SPA from %s", p)
+            app.mount("/", StaticFiles(directory=str(p), html=True), name="frontend")
+            break
     else:
         @app.get("/")
         async def root():

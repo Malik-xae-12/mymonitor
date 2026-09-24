@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional
-from backend.app.models.monitoring import PipelineRun, ActivityRun, ActivityError
+from app.models.monitoring import PipelineRun, ActivityRun, ActivityError
 
 import json
 import logging

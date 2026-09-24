@@ -8,9 +8,9 @@ from typing import List, Dict, Any, Optional, Set
 import httpx
 import pyodbc
 
-from backend.app.core.config import settings
-from backend.app.services.fabric_client import fabric_client
-from backend.app.services.db_service import db_service
+from app.core.config import settings
+from app.services.fabric_client import fabric_client
+from app.services.db_service import db_service
 
 logger = logging.getLogger("fabric_monitor.table_log_service")
 

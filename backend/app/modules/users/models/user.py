@@ -1,15 +1,29 @@
-"""User domain model (row representation for the ``users`` table)."""
-from typing import Optional
+from sqlalchemy import Boolean, Column, Index, String, text
+from sqlalchemy.orm import relationship
+from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 
-from pydantic import BaseModel
+from app.db.base import Base
+from app.db.mixins import AuditMixin, SoftDeleteMixin
 
 
-class User(BaseModel):
-    id: str
-    email: str
-    display_name: Optional[str] = None
-    oid: Optional[str] = None
-    role_id: Optional[str] = None
-    is_active: bool = True
-    created_at: Optional[str] = None
-    last_login_at: Optional[str] = None
+class User(SQLAlchemyBaseUserTableUUID, Base, AuditMixin, SoftDeleteMixin):
+    is_sso = Column(Boolean, default=False, nullable=False, server_default=text("0"))
+    azure_oid = Column(String(255), nullable=True, index=True)
+
+    items = relationship(
+        "Item",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="Item.user_id",
+    )
+    roles = relationship(
+        "Role",
+        secondary="user_role",
+        back_populates="users",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        Index("ix_user_email_lower", "email"),
+        Index("ix_user_is_active", "is_active"),
+    )

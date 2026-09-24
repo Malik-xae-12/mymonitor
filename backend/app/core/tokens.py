@@ -1,76 +1,58 @@
-"""Core token handling (JWT access and refresh tokens).
-Aligned with next-fastapi-starter and clean modular architecture.
-"""
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
 
 import jwt
 from jwt import InvalidTokenError
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.core.config import settings
+from app.core.config import settings
+from app.modules.auth.models.refresh_token import RefreshToken
+from app.modules.users.models.user import User
 
-logger = logging.getLogger("fabric_monitor.tokens")
+logger = logging.getLogger(__name__)
 
 
-def create_access_token(
-    subject: str,
-    email: Optional[str] = None,
-    role: Optional[str] = None,
-    extra_claims: Optional[Dict[str, Any]] = None,
-    expires_delta: Optional[timedelta] = None,
-) -> str:
-    """Create a signed JWT access token."""
+def create_access_token(user_id: uuid.UUID, email: str | None = None) -> str:
     now = datetime.now(timezone.utc)
-    expire = now + (expires_delta or timedelta(seconds=settings.ACCESS_TOKEN_EXPIRE_SECONDS))
-    payload: Dict[str, Any] = {
-        "sub": str(subject),
+    payload = {
+        "sub": str(user_id),
+        "aud": ["fastapi-users:auth"],
         "iat": now,
-        "exp": expire,
+        "exp": now + timedelta(seconds=settings.ACCESS_TOKEN_EXPIRE_SECONDS),
         "type": "access",
     }
     if email:
         payload["email"] = email
-    if role:
-        payload["role"] = role
-    if extra_claims:
-        payload.update(extra_claims)
-
     return jwt.encode(payload, settings.ACCESS_SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_access_token(token: str) -> Dict[str, Any]:
-    """Decode and verify an access token. Raises InvalidTokenError on failure."""
+def decode_access_token(token: str) -> dict:
     return jwt.decode(
         token,
         settings.ACCESS_SECRET_KEY,
         algorithms=[settings.ALGORITHM],
+        audience=["fastapi-users:auth"],
         options={"require": ["exp", "iat", "sub"]},
     )
 
 
-def create_refresh_token(
-    subject: str,
-    jti: Optional[str] = None,
-    expires_delta: Optional[timedelta] = None,
-) -> str:
-    """Create a signed JWT refresh token."""
+def _encode_refresh_jwt(user_id: uuid.UUID, jti: str, expires_at: datetime) -> str:
+    """Create a signed JWT refresh token with the given jti and fixed expiry."""
     now = datetime.now(timezone.utc)
-    expire = now + (expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-    token_jti = jti or str(uuid.uuid4())
     payload = {
-        "sub": str(subject),
+        "sub": str(user_id),
         "iat": now,
-        "exp": expire,
+        "exp": expires_at,
         "type": "refresh",
-        "jti": token_jti,
+        "jti": jti,
     }
     return jwt.encode(payload, settings.REFRESH_SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_refresh_token(token: str) -> Dict[str, Any]:
-    """Decode and verify a refresh token. Raises InvalidTokenError on failure."""
+def decode_refresh_token(token: str) -> dict:
+    """Decode and verify a refresh JWT. Raises InvalidTokenError on failure."""
     payload = jwt.decode(
         token,
         settings.REFRESH_SECRET_KEY,
@@ -80,3 +62,112 @@ def decode_refresh_token(token: str) -> Dict[str, Any]:
     if payload.get("type") != "refresh":
         raise InvalidTokenError("Not a refresh token")
     return payload
+
+
+async def create_refresh_token(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    expires_at: datetime | None = None,
+) -> str:
+    """Create a new refresh token (JWT) and persist its jti in the database.
+
+    Args:
+        expires_at: Fixed session expiry carried over from the original login.
+                    If None (fresh login), set to now + REFRESH_TOKEN_EXPIRE_DAYS.
+    """
+    if expires_at is None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+    jti = str(uuid.uuid4())
+
+    refresh_token = RefreshToken(
+        id=str(uuid.uuid4()),
+        token=jti,
+        user_id=str(user_id),
+        expires_at=expires_at,
+        revoked=False,
+    )
+    db.add(refresh_token)
+    await db.commit()
+    logger.info("Created refresh token jti=%s for user=%s, expires=%s", jti, user_id, expires_at)
+    return _encode_refresh_jwt(user_id, jti, expires_at)
+
+
+async def rotate_refresh_token(db: AsyncSession, old_token: str) -> tuple[str, User] | None:
+    """Validate, revoke, and reissue a refresh token with the same fixed expiry.
+
+    The new token inherits the original session's expiry — no sliding window.
+    Returns (new_token, user) or None if invalid/expired/revoked."""
+    # 1. Verify JWT signature and expiry (no DB hit)
+    try:
+        payload = decode_refresh_token(old_token)
+    except InvalidTokenError as exc:
+        logger.warning("Refresh token decode failed: %s", exc)
+        return None
+
+    jti = payload["jti"]
+    logger.info("Refresh token rotation attempt for jti=%s, user=%s", jti, payload.get("sub"))
+
+    # 2. Check DB for revocation status
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token == jti,
+            RefreshToken.revoked == False,  # noqa: E712
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    if not existing:
+        logger.warning("Refresh token jti=%s not found or already revoked", jti)
+        return None
+
+    # Revoke the old token
+    existing.revoked = True
+
+    # 3. Load and verify the user
+    user_result = await db.execute(select(User).where(User.id == existing.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user or not user.is_active:
+        await db.commit()
+        return None
+
+    # 4. Issue new refresh token with THE SAME expiry as the original
+    # Enforce absolute session timeout: if remaining time exceeds max single
+    # refresh lifetime (1 day), cap it. This limits damage from stolen tokens.
+    original_expiry = existing.expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    max_single_refresh = timedelta(days=1)
+    if original_expiry - now > max_single_refresh:
+        capped_expiry = now + max_single_refresh
+    else:
+        capped_expiry = original_expiry
+    new_token = await create_refresh_token(db, existing.user_id, expires_at=capped_expiry)
+    return new_token, user
+
+
+async def revoke_refresh_token(db: AsyncSession, token: str) -> bool:
+    """Revoke a single refresh token (JWT). Returns True if found and revoked."""
+    try:
+        payload = decode_refresh_token(token)
+    except InvalidTokenError:
+        return False
+
+    jti = payload["jti"]
+    result = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.token == jti, RefreshToken.revoked == False)  # noqa: E712
+        .values(revoked=True)
+    )
+    await db.commit()
+    return result.rowcount > 0
+
+
+async def revoke_all_user_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """Revoke all refresh tokens for a user. Returns count revoked."""
+    result = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user_id, RefreshToken.revoked == False)  # noqa: E712
+        .values(revoked=True)
+    )
+    await db.commit()
+    return result.rowcount

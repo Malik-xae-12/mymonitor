@@ -116,33 +116,58 @@ When a user re-runs a pipeline or a scheduled trigger fires:
 
 ---
 
-## 9. FastAPI Clean Architecture Specification (Skill Aligned)
+## 9. FastAPI Clean Architecture Specification (Skill Aligned & next-fastapi-starter)
 Adhering strictly to `.agents/skills/project-scaffold/references/fastapi-architecture.md` and `next-fastapi-starter/backend`:
 ```text
 backend/app/
-├── core/                        # System configurations, security & JWT
-│   ├── config.py                # Environment variables, settings (Pydantic BaseSettings)
+├── core/                        # Core system configurations, security & JWT
+│   ├── config.py                # Environment variables & settings (Pydantic BaseSettings)
 │   ├── security.py              # Password rules, validation, hashing
-│   ├── tokens.py                # JWT creation, decode, token expiration & validation
-│   └── rate_limiter.py          # Fabric REST rate limiting semaphore
+│   ├── tokens.py                # JWT creation, decode, token rotation & expiration
+│   ├── permissions.py           # Pre-built Role-based access control guards
+│   ├── rate_limit.py            # API rate limiting
+│   ├── events.py                # Startup DB ping & connection management
+│   ├── exceptions.py            # Global exception handlers
+│   └── logging.py               # Enterprise logging formatters
 ├── db/                          # Database connection and base abstractions
-│   └── session.py / db_service  # SQLite WAL session, connection lifecycle
-├── modules/                     # Domain-driven feature packages
-│   ├── auth/                    # Entra ID & JWT authentication workflows & dependencies
-│   ├── users/                   # RBAC users, roles, and workspace assignment management
-│   ├── workspaces/              # Fabric workspace & pipeline discovery endpoints
-│   └── table_logs/              # Lakehouse / Warehouse audit log queries
-├── services/                    # Background polling, alerting & AI diagnostics
+│   ├── base.py                  # SQLAlchemy DeclarativeBase
+│   ├── session.py               # Async engine and get_async_session generator
+│   └── models_import.py         # Registers all models for Alembic migrations
+├── modules/                     # Domain-driven feature packages (Router -> Service -> Repository -> Models)
+│   ├── auth/                    # Pre-built JWT & Entra ID SSO workflows, refresh tokens
+│   │   ├── router.py, service.py, schema.py, dependency.py, repository.py, models/
+│   ├── users/                   # RBAC users, roles, and support assignments
+│   │   ├── router.py, service.py, schema.py, repository.py, models/
+│   ├── workspaces/              # Workspace catalog & access scoping
+│   │   ├── router.py, service.py, schema.py
+│   ├── pipelines/               # Parent-child pipeline runs, tree, history & schedules
+│   │   ├── router.py, service.py, schema.py
+│   ├── sla/                     # SLA thresholds, active incidents, resolution & watchdog
+│   │   ├── router.py, service.py, schema.py
+│   ├── table_logs/              # Lakehouse / Warehouse column mapping & audit logs
+│   │   ├── router.py, service.py, schema.py
+│   ├── diagnostics/             # Google Gemini 3.6 Flash root cause diagnostics
+│   │   ├── router.py, service.py, schema.py
+│   ├── directory/               # Entra ID Microsoft Graph directory user discovery
+│   │   ├── router.py, service.py, schema.py
+│   └── websocket/               # Real-time WebSocket room subscriptions
+│       ├── router.py, connection_manager.py
+├── services/                    # Autonomous engines & external clients
 │   ├── leased_poller.py         # Adaptive dual-speed (3.5s/15s) differential poller
 │   ├── alert_service.py         # SLA watchdog & Gmail SMTP alert dispatcher
 │   ├── ai_diagnostic_service.py # Gemini 3.6 Flash failure analysis
-│   └── fabric_client.py         # Microsoft Fabric REST API client
+│   ├── fabric_client.py         # Microsoft Fabric REST API client
+│   ├── tree_builder.py          # Dynamic parent-child hierarchy assembler
+│   ├── db_service.py            # SQLite WAL telemetry storage engine
+│   └── directory_service.py     # Microsoft Graph directory service
 ├── shared/                      # Common reusable utilities & envelopes
-│   ├── responses.py             # Standard ApiResponse(success, data, message)
-│   ├── pagination.py            # Pagination utilities
+│   ├── responses.py             # Standard ApiResponse(success, data, message, meta)
+│   ├── pagination.py            # PageParams & PaginatedResponse utilities
 │   └── constants.py             # System-wide constants
-└── main.py                      # Application bootstrap & router registration
+├── app_factory.py               # Application factory function (create_app)
+└── main.py                      # Application bootstrap entry point
 ```
+
 
 ---
 

@@ -5,8 +5,8 @@ import logging
 from typing import Dict, Any, Optional
 import httpx
 
-from backend.app.core.config import settings
-from backend.app.services.db_service import db_service
+from app.core.config import settings
+from app.services.db_service import db_service
 
 logger = logging.getLogger("fabric_monitor.ai_diagnostic")
 

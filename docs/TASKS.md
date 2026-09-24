@@ -31,7 +31,7 @@ Work on **one atomic task at a time**. Check off completed tasks and update `MEM
 - [ ] TASK-401: Run Playwright MCP responsive matrix (375 / 768 / 1440) at :3000
 - [ ] TASK-402: Smoke test — console errors, failed network, WebSocket health
 - [ ] TASK-403: Audit security controls (secrets in `.env`, input validation)
-- [ ] TASK-404: Verify production build (`npm run build`) served by FastAPI
+- [x] TASK-404: Verify production build (`npm run build`) served by FastAPI
 
 ## Phase 5: Auth & RBAC (Azure AD)
 - [x] TASK-501: Backend Entra ID token validation (JWKS) + `get_current_user` / `require_admin`
@@ -53,16 +53,22 @@ Work on **one atomic task at a time**. Check off completed tasks and update `MEM
 - [x] TASK-507: Scope monitoring APIs + workspace picker to assigned workspaces
 - [ ] TASK-508: Token-aware WebSocket handshake; 401/403 handling in UI
 
-## Phase 6: Architecture Realignment & Optimization
+## Phase 6: Architecture Realignment & Optimization (Delivered)
 - [x] TASK-601: Remove Next.js frontend from `next-fastapi-starter/` leaving only the FastAPI backend
-- [x] TASK-602: Update project documentation (`TASKS.md`, `ARCHITECTURE.md`, `PRD.md`, `MEMORY.md`) to document the architecture migration and cleanup
-- [x] TASK-603: Align FastAPI architecture with `project-scaffold` and `next-fastapi-starter/backend` (`core/security.py`, `core/tokens.py`, `shared/responses.py`, `shared/constants.py`, `app_factory.py`)
+- [x] TASK-602: Update project documentation (`TASKS.md`, `ARCHITECTURE.md`, `PRD.md`, `MEMORY.md`)
+- [x] TASK-603: Align FastAPI architecture with `project-scaffold` (`core/security.py`, `core/tokens.py`, `shared/responses.py`, `shared/constants.py`, `app_factory.py`)
 - [x] TASK-604: Reorganize React frontend to adhere strictly to `react-vite-architecture.md` (`features/{monitoring,admin,table-logs,auth}`, `components/{layout,shared,ui}`, `routes/`, `services/`, `utils/`, `constants/`, `config/`, `context/`)
 - [x] TASK-605: Clean up dead/unwanted code and files, update all imports, verify `npm run build` and runtime integrity
+- [x] TASK-606: Document backend shift into clean modular structure (`Router -> Service -> Repository -> Models`)
+- [x] TASK-607: Update `backend/app/core/config.py` with full Fabric, Azure AD, SMTP, Gemini settings & fallback defaults
+- [x] TASK-608: Migrate background engines & services (`leased_poller`, `alert_service`, `fabric_client`, `tree_builder`, `connection_manager`, `db_service`, `ai_diagnostic_service`, `table_log_service`, `directory_service`) into `backend/app/services/`
+- [x] TASK-609: Modularize domain routes into Router -> Service -> Repository -> Schema (`workspaces`, `pipelines`, `sla`, `table_logs`, `diagnostics`, `directory`, `websocket`)
+- [x] TASK-610: Wire `backend/app/app_factory.py` with lifespan hooks, domain routers, exception handlers, and pre-built JWT auth
+- [x] TASK-611: Remove `next-fastapi-starter/` folder, remove generic SQL table viewer admin, remove unused `nginx`, `.github`, `local-shared-data`, and promote clean modular backend to root `/backend`
+- [x] TASK-612: Live ASGI integration testing (`/health`, `/api/workspaces`, `/api/admin/users`, `/api/auth/me`, SPA index.html) and frontend `npm run build` verification
 
 ## Phase 7: Fabric UI Redesign (Figma MCP + Fabric UI kit)
 - [ ] TASK-701: Pull Fabric UI kit tokens/frames via Figma MCP; map to Tailwind/Fluent tokens
 - [ ] TASK-702: Rebuild shell (nav rail, suite bar, command bar, side pane) to Fluent 2
 - [ ] TASK-703: Redesign each page to be self-explanatory per `docs/DESIGN.md` §6
 - [ ] TASK-704: Playwright MCP visual pass across the responsive matrix
-

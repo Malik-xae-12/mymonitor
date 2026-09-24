@@ -4,7 +4,7 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
 import aiosqlite
-from backend.app.core.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger("fabric_monitor.db")
 

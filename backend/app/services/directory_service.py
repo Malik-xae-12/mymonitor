@@ -9,7 +9,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional
 import httpx
 
-from backend.app.core.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger("fabric_monitor.directory")
 

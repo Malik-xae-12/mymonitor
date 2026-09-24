@@ -1,9 +1,32 @@
-"""Pydantic request/response schemas for the users module."""
-from typing import List, Optional
+import uuid
+from datetime import datetime
+from typing import Optional, List
+from pydantic import BaseModel, EmailStr
 
-from pydantic import BaseModel
+
+class UserBase(BaseModel):
+    email: EmailStr
+    is_active: bool = True
+    is_superuser: bool = False
+    is_verified: bool = False
 
 
+class UserRead(UserBase):
+    id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UserUpdate(BaseModel):
+    email: EmailStr | None = None
+    is_active: bool | None = None
+    is_superuser: bool | None = None
+    is_verified: bool | None = None
+
+
+# ---- Fabric Monitoring RBAC Schemas ----
 class RoleResponse(BaseModel):
     id: str
     name: str
@@ -21,18 +44,18 @@ class UserResponse(BaseModel):
     last_login_at: Optional[str] = None
 
 
-class UsersListResponse(BaseModel):
-    users: List[UserResponse]
-    roles: List[RoleResponse]
-
-
-class SetRoleRequest(BaseModel):
-    email: str
-    role_id: str
-
-
 class AddUserRequest(BaseModel):
     email: str
     display_name: Optional[str] = None
     oid: Optional[str] = None
-    role_id: str
+    role_id: str  # 'l1' or 'l2'
+
+
+class SetRoleRequest(BaseModel):
+    email: str
+    role_id: str  # 'l1' or 'l2'
+
+
+class UsersListResponse(BaseModel):
+    users: List[UserResponse]
+    roles: List[RoleResponse]

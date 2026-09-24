@@ -5,7 +5,7 @@ Maintains the dynamic pulse of the project across sessions.
 ---
 
 ## Current Status
-- **Phase**: Phase 6: Architecture Realignment & Optimization (Next-FastAPI starter cleanup, FastAPI modular architecture, React feature-based architecture)
+- **Phase**: Phase 6 Completed — Full Monitoring Backend Promoted to Modular Domain Architecture (`Router -> Service -> Repository -> Models`), Unused Artifacts Removed, Clean Consolidated Root
 - **Active Branch**: `admin`
 - **Last Updated**: 2026-09-25
 
@@ -33,17 +33,19 @@ Maintains the dynamic pulse of the project across sessions.
 - [x] Multi-schedule modal showing all configured schedules per pipeline
 - [x] Lakehouse/Warehouse table logging & batch lineage (Batch Header → Bronze → Silver)
 - [x] Google Gemini AI error diagnostics with SQLite error-hash caching
-- [x] Phase 6: Architecture Realignment & Optimization:
-  - Removed Next.js frontend from `next-fastapi-starter/` keeping only FastAPI backend.
-  - Implemented FastAPI modular clean architecture: `app_factory.py`, `core/security.py`, `core/tokens.py`, `core/exceptions.py`, `shared/responses.py`, `shared/constants.py`, `shared/pagination.py`.
+- [x] Phase 6: Architecture Realignment & Consolidation:
+  - Promoted FastAPI modular clean architecture to `/backend/app/`: `app_factory.py`, `core/security.py`, `core/tokens.py`, `core/exceptions.py`, `shared/responses.py`, `shared/constants.py`, `shared/pagination.py`.
+  - Stripped out the generic SQL table-viewer admin panel from starter (`modules/admin/registry.py`, `service.py`, `schema.py`) and removed dummy items module.
+  - Preserved Fabric Admin endpoints (`/api/admin/assignments`, `/api/admin/users`, `/api/roles`) in `modules/admin/router.py`.
+  - Removed entire `next-fastapi-starter/` directory along with unused `nginx`, `.github`, `local-shared-data`.
   - Reorganized React frontend into full feature-based architecture (`features/{monitoring,admin,table-logs,auth}`, `components/{layout,shared,ui}`, `routes/`, `services/`, `utils/`, `constants/`, `config/`, `context/`).
   - Removed dead/unwanted code (`AccessManagementPage.jsx`, `DashboardHeader.jsx`, `ActivityList.jsx`, flat root component files).
-  - Verified 100% build integrity (`npm run build`) and runtime backend imports.
+  - Verified 100% build integrity (`npm run build` in 2.15s) and ASGI integration test passing across all endpoints (`/health`, `/api/workspaces`, `/api/admin/users`, `/api/auth/me`, and static SPA hosting).
 - [x] Comprehensive documentation suite in `docs/` (`PRD.md`, `ARCHITECTURE.md`, `TASKS.md`, `MEMORY.md`, `POLLER_AND_RBAC_GUIDE.md`)
 
 ## Immediate Operational Notes
 - Branch `admin` is synced with `origin/admin`.
-- Local dev servers running:
-  - Backend: `uvicorn app.main:app --reload` on port 8000.
-  - Frontend: `npm run dev` on port 3000 (Vite).
+- Running the application:
+  - Backend: `uvicorn app.main:app --reload` from `backend/` or `uvicorn backend.app.main:app --reload` from root on port 8000.
+  - Frontend: `npm run dev` from `frontend/` on port 5173 / port 3000 (Vite).
 - Auth mode: `VITE_AUTH_ENABLED=true` in frontend, `AUTH_ENABLED=True` in backend.

@@ -1,35 +1,29 @@
-"""Role domain model + default role catalog.
+from uuid import uuid4
 
-DB access uses the shared ``aiosqlite`` layer (see ``users/repository.py``); these
-are lightweight domain representations rather than an ORM mapping.
-"""
-from pydantic import BaseModel
+from sqlalchemy import Column, String, UniqueConstraint, ForeignKey
+from sqlalchemy.orm import relationship
 
-# Canonical role ids used across the app (also mirrored in the frontend roles constant).
-ROLE_ADMIN = "admin"
-ROLE_L1 = "l1"
-ROLE_L2 = "l2"
-
-DEFAULT_ROLES = [
-    {
-        "id": ROLE_ADMIN,
-        "name": "Administrator",
-        "description": "Full access; manages users, workspace assignments, SLA and table config.",
-    },
-    {
-        "id": ROLE_L1,
-        "name": "L1 Support",
-        "description": "First responder for assigned workspaces.",
-    },
-    {
-        "id": ROLE_L2,
-        "name": "L2 Support",
-        "description": "Escalation owner for assigned workspaces.",
-    },
-]
+from app.db.base import Base
+from app.db.mixins import AuditMixin, SoftDeleteMixin
 
 
-class Role(BaseModel):
-    id: str
-    name: str
-    description: str | None = None
+class Role(Base, AuditMixin, SoftDeleteMixin):
+    __tablename__ = "role"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name = Column(String(255), nullable=False, unique=True, index=True)
+    description = Column(String(500), nullable=True)
+
+    users = relationship(
+        "User",
+        secondary="user_role",
+        back_populates="roles",
+        lazy="selectin",
+    )
+
+
+class UserRole(Base):
+    __tablename__ = "user_role"
+
+    user_id = Column(String(36), ForeignKey("user.id"), primary_key=True)
+    role_id = Column(String(36), ForeignKey("role.id"), primary_key=True)

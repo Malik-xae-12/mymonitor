@@ -1,58 +1,143 @@
-"""Business logic for the auth / RBAC module."""
-import datetime
-from typing import List
+import logging
+import secrets
+import urllib.parse
+import uuid
+from pathlib import Path
+from typing import Optional
 
-from backend.app.modules.auth.schema import (
-    AssignmentUpsertRequest,
-    UserProfile,
-    WorkspaceAssignment,
+from fastapi import Depends, Request
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from fastapi_users import (
+        BaseUserManager,
+        FastAPIUsers,
+        UUIDIDMixin,
+        InvalidPasswordException,
 )
-from backend.app.modules.users.service import users_service
-from backend.app.services.db_service import db_service
+from fastapi_users.authentication import (
+        AuthenticationBackend,
+        BearerTransport,
+        JWTStrategy,
+)
+from fastapi_users.db import SQLAlchemyUserDatabase
+
+from app.core.config import settings
+from app.core.permissions import RoleName
+from app.core.security import validate_password_rules
+from app.modules.users.service import assign_role_to_user
+from app.db.session import get_user_db, get_async_session
+from app.modules.users.models.user import User
+from app.modules.auth.schema import UserCreate
+from app.shared.constants import AUTH_URL_PATH
 
 
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+logger = logging.getLogger(__name__)
 
 
-class AuthService:
-    async def list_all_assignments(self) -> List[WorkspaceAssignment]:
-        rows = await db_service.get_all_assignments()
-        return [self._to_model(r) for r in rows]
+def get_email_config() -> ConnectionConfig:
+    return ConnectionConfig(
+        MAIL_USERNAME=settings.MAIL_USERNAME,
+        MAIL_PASSWORD=settings.MAIL_PASSWORD,
+        MAIL_FROM=settings.MAIL_FROM,
+        MAIL_PORT=settings.MAIL_PORT,
+        MAIL_SERVER=settings.MAIL_SERVER,
+        MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
+        MAIL_STARTTLS=settings.MAIL_STARTTLS,
+        MAIL_SSL_TLS=settings.MAIL_SSL_TLS,
+        USE_CREDENTIALS=settings.USE_CREDENTIALS,
+        VALIDATE_CERTS=settings.VALIDATE_CERTS,
+        TEMPLATE_FOLDER=Path(__file__).parent / settings.TEMPLATE_DIR,
+    )
 
-    async def list_assignments_for_user(self, email: str) -> List[WorkspaceAssignment]:
-        rows = await db_service.get_assignments_for_user(email)
-        return [self._to_model(r) for r in rows]
 
-    async def upsert_assignment(
-        self, payload: AssignmentUpsertRequest, assigned_by: str
-    ) -> WorkspaceAssignment:
-        await db_service.upsert_assignment(
-            data=payload.model_dump(),
-            assigned_by=assigned_by,
-            when=_now(),
-        )
-        # Ensure the assigned L1/L2 exist in the users table with the right role.
-        await users_service.ensure_assignment_users(payload.l1_email, payload.l2_email)
-        row = await db_service.get_assignment(payload.workspace_id)
-        return self._to_model(row)
-
-    async def delete_assignment(self, workspace_id: str) -> None:
-        await db_service.delete_assignment(workspace_id)
-
-    @staticmethod
-    def _to_model(row: dict) -> WorkspaceAssignment:
-        return WorkspaceAssignment(
-            workspace_id=row.get("workspace_id"),
-            workspace_name=row.get("workspace_name"),
-            l1_email=row.get("l1_email"),
-            l2_email=row.get("l2_email"),
-            sla1_minutes=row.get("sla1_minutes") or 30,
-            sla2_minutes=row.get("sla2_minutes") or 60,
-            table_config_done=bool(row.get("table_config_done")),
-            assigned_by=row.get("assigned_by"),
-            updated_at=row.get("updated_at"),
+async def send_reset_password_email(user: User, token: str) -> None:
+    if not all([settings.MAIL_SERVER, settings.MAIL_PORT, settings.MAIL_FROM]):
+        raise ValueError(
+            "Email configuration incomplete. "
+            f"MAIL_SERVER={settings.MAIL_SERVER}, "
+            f"MAIL_PORT={settings.MAIL_PORT}, "
+            f"MAIL_FROM={settings.MAIL_FROM}"
         )
 
+    conf = get_email_config()
+    email = user.email
+    base_url = f"{settings.FRONTEND_URL}/password-recovery/confirm?"
+    params = {"token": token}
+    encoded_params = urllib.parse.urlencode(params)
+    link = f"{base_url}{encoded_params}"
 
-auth_service = AuthService()
+    message = MessageSchema(
+        subject="Password recovery",
+        recipients=[email],
+        template_body={"username": email, "link": link},
+        subtype=MessageType.html,
+    )
+
+    fm = FastMail(conf)
+    await fm.send_message(message, template_name="password_reset.html")
+
+
+class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
+    reset_password_token_secret = settings.RESET_PASSWORD_SECRET_KEY
+    verification_token_secret = settings.VERIFICATION_SECRET_KEY
+
+    async def on_after_register(self, user: User, request: Optional[Request] = None):
+        print(f"User {user.id} has registered.")
+        # Assign default "user" role
+        if hasattr(self, "user_db") and hasattr(self.user_db, "session"):
+            await assign_role_to_user(self.user_db.session, str(user.id), RoleName.USER)
+        else:
+            async for db in get_async_session():
+                await assign_role_to_user(db, str(user.id), RoleName.USER)
+                break
+
+    async def on_after_forgot_password(
+        self, user: User, token: str, request: Optional[Request] = None
+    ):
+        try:
+            await send_reset_password_email(user, token)
+            logger.info(f"Password reset email sent to {user.email}")
+        except Exception as exc:
+            logger.error(
+                "Failed to send password reset email to %s: %s: %s",
+                user.email, type(exc).__name__, str(exc),
+            )
+
+    async def on_after_request_verify(
+        self, user: User, token: str, request: Optional[Request] = None
+    ):
+        print(
+            f"Verification requested for user {user.id}. Verification token: {token}"
+        )
+
+    async def validate_password(
+        self,
+        password: str,
+        user: UserCreate,
+    ) -> None:
+        errors = validate_password_rules(password, user.email)
+
+        if errors:
+            raise InvalidPasswordException(reason=errors)
+
+
+async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db)):
+    yield UserManager(user_db)
+
+
+bearer_transport = BearerTransport(tokenUrl=f"/{AUTH_URL_PATH}/jwt/login")
+
+
+def get_jwt_strategy() -> JWTStrategy:
+    return JWTStrategy(
+        secret=settings.ACCESS_SECRET_KEY,
+        lifetime_seconds=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+    )
+
+
+auth_backend = AuthenticationBackend(
+    name="jwt",
+    transport=bearer_transport,
+    get_strategy=get_jwt_strategy,
+)
+
+fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])

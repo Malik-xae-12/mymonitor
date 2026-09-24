@@ -2,8 +2,8 @@ import time
 import datetime
 import httpx
 from typing import List, Dict, Any, Optional
-from backend.app.core.config import settings
-from backend.app.core.rate_limiter import rate_limiter
+from app.core.config import settings
+from app.core.rate_limiter import rate_limiter
 
 import logging
 

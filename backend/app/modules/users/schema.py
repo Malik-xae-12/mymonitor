@@ -1,9 +1,12 @@
+"""Pydantic schemas for the unified users and user-setup management module."""
+
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
+# ---- FastAPI Users Base Schemas ----
 class UserBase(BaseModel):
     email: EmailStr
     is_active: bool = True
@@ -26,7 +29,7 @@ class UserUpdate(BaseModel):
     is_verified: bool | None = None
 
 
-# ---- Fabric Monitoring RBAC Schemas ----
+# ---- Fabric Monitoring RBAC & User Management Schemas ----
 class RoleResponse(BaseModel):
     id: str
     name: str
@@ -59,3 +62,50 @@ class SetRoleRequest(BaseModel):
 class UsersListResponse(BaseModel):
     users: List[UserResponse]
     roles: List[RoleResponse]
+
+
+class UserProfile(BaseModel):
+    email: str
+    name: Optional[str] = None
+    oid: Optional[str] = None
+    role: str = "none"  # admin | l1 | l2 | none
+    is_admin: bool = False
+    assigned_workspace_ids: List[str] = Field(default_factory=list)
+
+
+# ---- Workspace L1/L2 Support Team Assignment Schemas ----
+class WorkspaceAssignment(BaseModel):
+    workspace_id: str
+    workspace_name: Optional[str] = None
+    l1_email: Optional[str] = None
+    l2_email: Optional[str] = None
+    sla1_minutes: int = 30
+    sla2_minutes: int = 60
+    table_config_done: bool = False
+    assigned_by: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AssignmentUpsertRequest(BaseModel):
+    workspace_id: str
+    workspace_name: Optional[str] = None
+    l1_email: Optional[str] = None
+    l2_email: Optional[str] = None
+    sla1_minutes: int = 30
+    sla2_minutes: int = 60
+    table_config_done: bool = False
+
+
+__all__ = [
+    "UserBase",
+    "UserRead",
+    "UserUpdate",
+    "RoleResponse",
+    "UserResponse",
+    "AddUserRequest",
+    "SetRoleRequest",
+    "UsersListResponse",
+    "UserProfile",
+    "WorkspaceAssignment",
+    "AssignmentUpsertRequest",
+]

@@ -53,6 +53,10 @@ Code MUST be organized by domain under `src/features/` (`auth`, `monitoring`, `t
 ### Rule 2.3: Zero Hardcoded API Endpoints
 All API calls must use `src/services/axiosClient.js` with centralized route definitions in `src/services/endpoints.js`.
 
+### Rule 2.4: Microsoft Fabric Fluent 2 Light UI Standard
+- The web interface MUST strictly use the **Microsoft Fabric Fluent 2 Light Design System** (`#faf9f8` canvas, `#ffffff` card/table containers, `#0f6cbd` Fabric brand blue, Segoe UI typography, and soft Fluent status badges).
+- **There is no dark mode**; all components and modals adhere strictly to Microsoft Fabric's enterprise light aesthetic.
+
 ---
 
 ## 3. Data Integrity & Concurrency Rules

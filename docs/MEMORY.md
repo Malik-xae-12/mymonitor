@@ -25,7 +25,7 @@ The **Microsoft Fabric Real-Time Monitoring Hub** has successfully completed ful
 | **Database ORM** | SQLAlchemy 2.0 Async | `sqlite+aiosqlite`, `async_session_maker`, `sqlite_upsert`, `selectinload` |
 | **Persistence** | SQLite 3 | WAL Mode (`PRAGMA journal_mode=WAL;`), `busy_timeout=15000` |
 | **Frontend** | React 18 (SPA) | Vite, Lucide React, Axios, MSAL Browser (@azure/msal-browser) |
-| **Styling** | Vanilla CSS + Modules | Dark mode mission-control palette, glassmorphism, micro-animations |
+| **Styling** | Vanilla CSS + Fluent 2 | Microsoft Fabric Fluent 2 Light System (#faf9f8 canvas, #ffffff cards, #0f6cbd brand, no dark mode) |
 | **Real-Time** | WebSockets | Native browser WebSocket API + FastAPI WebSocket router |
 | **AI Diagnostics** | Google Gemini | Google GenAI SDK (`gemini-1.5-pro`) |
 | **Fabric Integration** | Microsoft Fabric REST API | T-SQL via `pyodbc` for Lakehouse / Warehouse audit tables |

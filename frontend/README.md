@@ -43,7 +43,7 @@ frontend/
 │   │       ├── apiClient.js     # Authenticated fetch wrapper with MSAL token attachment
 │   │       └── endpoints.js     # Backend API endpoint URL definitions
 │   ├── context/                 # Global UI context
-│   │   └── ThemeContext.jsx     # Dark / light theme provider
+│   │   └── ThemeContext.jsx     # Microsoft Fabric theme provider (Fluent 2 Light Design)
 │   ├── constants/               # System constants
 │   │   ├── roles.js             # RBAC role constants ('admin', 'l1', 'l2')
 │   │   ├── routes.js            # Tab identifiers and navigation route keys
@@ -95,7 +95,7 @@ frontend/
 - **`Spinner/`**: Accessible SVG loading spinners.
 
 ### 4. `src/components/shared/` — Shared Composite Components
-- [`Header.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/Header.jsx): Top navigation header featuring the workspace dropdown selector, live WebSocket connection status indicator, manual refresh button, theme toggle, and signed-in user avatar/profile menu.
+- [`Header.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/Header.jsx): Top navigation header featuring the workspace dropdown selector, live WebSocket connection status indicator, manual refresh button with countdown, and signed-in user avatar/profile menu.
 - [`ErrorDetailModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/ErrorDetailModal.jsx): Inspects failed pipeline activities, presents sanitized stack traces, and queries Google Gemini Flash to display root-cause explanations and step-by-step remediation advice.
 - [`SlaBadge.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/SlaBadge.jsx): Displays SLA status with warning badges, breach indicators, and remaining resolution countdowns.
 - [`SlaConfigModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/SlaConfigModal.jsx): Modal allowing users to configure pipeline-level SLA1 warning minutes, SLA2 breach minutes, and assigned L1/L2 contact emails.

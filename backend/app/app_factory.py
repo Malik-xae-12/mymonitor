@@ -15,7 +15,6 @@ from app.core.config import settings
 from app.core.csrf import CSRFMiddleware
 from app.core.events import create_database
 from app.core.rate_limiter import limiter
-from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
 from app.modules.diagnostics.router import router as diagnostics_router
 from app.modules.directory.router import router as directory_router
@@ -95,7 +94,6 @@ def create_app() -> FastAPI:
     app.add_middleware(CSRFMiddleware)
 
     # 1. Register Core Domain Routers
-    app.include_router(admin_router)
     app.include_router(workspaces_router)
     app.include_router(pipelines_router)
     app.include_router(sla_router)
@@ -103,11 +101,11 @@ def create_app() -> FastAPI:
     app.include_router(diagnostics_router)
     app.include_router(directory_router)
     app.include_router(websocket_router)
+    app.include_router(users_router)
 
-    # 2. Register Auth & User Routers under /api
+    # 2. Register Auth Router under /api
     api_router = APIRouter(prefix="/api")
     api_router.include_router(auth_router, prefix=f"/{AUTH_URL_PATH}")
-    api_router.include_router(users_router, prefix="/users")
     app.include_router(api_router)
 
     # Health Check Endpoint

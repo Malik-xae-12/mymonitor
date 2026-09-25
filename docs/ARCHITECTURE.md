@@ -41,7 +41,7 @@ flowchart TB
             Mod_Pipe["Pipelines & Tree Engine"]
             Mod_SLA["SLA & Alerting Engine"]
             Mod_Logs["Table Logs & Ingestion Lineage"]
-            Mod_User["Users & Directory Module"]
+            Mod_User["Users & Setup Module\n(Users, Roles & Workspace L1/L2 Assignments)"]
             Mod_Diag["AI Diagnostics (Gemini)"]
         end
 
@@ -399,3 +399,19 @@ erDiagram
 11. **`users`**: `id` (PK), `email` (Unique), `oid`, `display_name`, `role_id` (FK), `is_active`, `is_verified`, `last_login_at`, `created_at`.
 12. **`roles`**: `id` (PK), `name`, `description`, `created_at`.
 13. **`refresh_tokens`**: `id` (PK), `user_id` (FK), `token_hash`, `expires_at`, `revoked_at`, `created_at`.
+
+---
+
+## 12. Frontend Presentation Architecture — Microsoft Fabric Light UI
+
+The user interface is engineered strictly using the **Microsoft Fabric Fluent 2 Light Design System** (pure light mode; **no dark mode**):
+- **Canvas & Surfaces**: `#faf9f8` off-white viewport canvas, `#ffffff` card/table containers, `#f3f2f1` subheader and table column header surfaces, `#edebe9`/`#e1dfdd` Fluent borders.
+- **Typography**: `"Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif` with high-contrast text (`#242424` primary, `#605e5c` secondary).
+- **Brand Accent**: Microsoft Fabric Brand Blue `#0f6cbd` (hover `#115ea3`, active tint `#eff6fc`).
+- **Semantic Status System**:
+  - Succeeded: `#107c41` on `#dff6dd`
+  - In Progress: `#0f6cbd` on `#eff6fc` (with live ticking stopwatch duration counter)
+  - Failed / Breached: `#c42b1c` on `#fde7e9`
+  - Cancelled / Not Run: `#605e5c` on `#f3f2f1`
+  - Scheduled: `#773adc` on `#f3e8ff`
+- **Custom Light Scrollbars**: Sleek 6px Fluent scrollbars with `#f3f2f1` track and `#c8c6c4` rounded thumb.

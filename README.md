@@ -54,7 +54,7 @@ The repository contains an exhaustive documentation suite structured according t
 |---|---|
 | 📖 **[PRD.md](docs/PRD.md)** | Full Product Requirements Document detailing problem statement, user personas (`admin`, `l1`, `l2`), functional requirements (FR-1 to FR-8), NFRs, and acceptance criteria. |
 | 🏗️ **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Deep architectural specifications: adaptive dual-speed leased polling, permanent terminal state caching, re-run handling lifecycle, dynamic child pipeline detection, two-tier SLA engine, and SQLAlchemy ORM models. |
-| 🎨 **[DESIGN.md](docs/DESIGN.md)** | UI/UX design tokens, mission-control dark palette, live stopwatch timer, component specs, and responsive breakpoint rules (375px, 768px, 1440px). |
+| 🎨 **[DESIGN.md](docs/DESIGN.md)** | UI/UX design tokens, Microsoft Fabric Fluent 2 Light System (#faf9f8 canvas, #ffffff cards, #0f6cbd brand, no dark mode), live stopwatch timer, component specs, and responsive rules. |
 | 📏 **[RULES.md](docs/RULES.md)** | Enforced engineering rules: Zero Raw SQL Policy, strict 4-layer discipline (`router` ➔ `service` ➔ `repository` ➔ `models`), mandatory docstrings, and Pydantic validation. |
 | ✅ **[TASKS.md](docs/TASKS.md)** | Complete phased implementation checklist across 12 engineering phases, with 100% of capabilities verified and marked complete. |
 | ⚖️ **[DECISIONS.md](docs/DECISIONS.md)** | Architectural Decision Records (ADRs) covering Entra ID JWKS key rotation, dual-speed leased polling, pure SQLAlchemy Async ORM migration, dynamic tree building, and SLA escalation. |

@@ -80,6 +80,15 @@ Testing levels:
 | `TC-AI-01` | Error trace analysis | Returns structured root cause, recommended fix, and confidence score. | **PASS** |
 | `TC-AI-02` | Deterministic caching | Identical error hash returns cached diagnosis instantaneously. | **PASS** |
 
+### Suite 9: User Setup & Support Assignments (Unified Users Module)
+| Test ID | Scenario | Expected Behavior | Result |
+|---|---|---|:---:|
+| `TC-USER-01` | List users and roles | `GET /api/admin/users` returns all directory users and role definitions. | **PASS** |
+| `TC-USER-02` | Assign user role | `POST /api/admin/users/role` updates role to `l1` or `l2`. | **PASS** |
+| `TC-USER-03` | Workspace support assignment | `POST /api/admin/assignments` binds L1/L2 engineers and SLA targets to workspace. | **PASS** |
+| `TC-USER-04` | List workspace assignments | `GET /api/admin/assignments` returns all active workspace support assignments. | **PASS** |
+| `TC-USER-05` | Delete workspace assignment | `DELETE /api/admin/assignments/{id}` removes assignment configuration. | **PASS** |
+
 ---
 
 ## 3. Responsive Breakpoint Testing Matrix

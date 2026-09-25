@@ -87,10 +87,10 @@ The Monitoring Hub solves these pain points by providing an intelligent, cached,
   - Returns Root Cause, Recommended Fix, and Confidence Score.
   - Caches results by deterministic error hash to serve duplicate errors instantaneously.
 
-### 3.8 User Management & Directory Administration
+### 3.8 Unified User Setup, Directory & Workspace Assignments
 - **FR-8.1**: Directory search over Microsoft Entra ID and local users.
 - **FR-8.2**: Role assignment (`admin`, `l1`, `l2`) with instant permission updates.
-- **FR-8.3**: Workspace assignment associating L1/L2 engineers with specific workspaces.
+- **FR-8.3**: Workspace assignment associating L1/L2 support engineers and default SLA thresholds with specific workspaces (unified in `users` module).
 
 ---
 
@@ -109,6 +109,9 @@ The Monitoring Hub solves these pain points by providing an intelligent, cached,
 ### 4.3 Reliability & Availability
 - **NFR-7**: SQLite database must operate in Write-Ahead Logging (WAL) mode to permit concurrent reads and writes without database locks.
 - **NFR-8**: WebSocket connections must support automatic reconnection with exponential backoff on client network interruptions.
+
+### 4.4 User Interface & Brand Consistency
+- **NFR-9**: The web application must strictly adhere to the **Microsoft Fabric Fluent 2 Light Design System** (`#faf9f8` canvas, `#ffffff` card/table containers, `#0f6cbd` Fabric brand blue, Segoe UI typography, and soft Fluent status badges). **There is no dark mode.**
 
 ---
 

@@ -250,7 +250,7 @@ router.include_router(
 
 from app.modules.auth.dependency import get_current_user
 from app.modules.auth.schema import UserProfile, WorkspaceAssignment
-from app.modules.admin.service import admin_service
+from app.modules.users.service import users_service
 
 
 @router.get("/me", response_model=UserProfile)
@@ -265,5 +265,5 @@ async def get_my_assignments(
 ) -> list[WorkspaceAssignment]:
     """Assignments where the caller is the L1 or L2 responsible user."""
     if user.is_admin:
-        return await admin_service.list_all_assignments()
-    return await admin_service.list_assignments_for_user(user.email)
+        return await users_service.list_all_assignments()
+    return await users_service.list_assignments_for_user(user.email)

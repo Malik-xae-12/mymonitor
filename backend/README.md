@@ -39,15 +39,14 @@ backend/
 │   ├── core/                    # Core configuration, security, JWT tokens, rate limiting
 │   ├── db/                      # SQLite database engine, WAL-mode sessions, and base mixins
 │   ├── shared/                  # Shared cross-domain clients (Fabric REST API client)
-│   └── modules/                 # Self-contained business domain modules
-│       ├── admin/               # Support assignments and user role administration
+│   └── modules/                 # Self-contained business domain modules (9 Core Modules)
 │       ├── auth/                # Microsoft Entra ID SSO, JWKS key rotation, and session management
 │       ├── diagnostics/         # AI failure analysis with Google Gemini Flash
 │       ├── directory/           # Microsoft Graph API user and directory search
 │       ├── pipelines/           # Data pipeline trees, runs, activities, and leased poller
 │       ├── sla/                 # SLA monitoring, incident tracking, and SMTP email alerts
 │       ├── table_logs/          # Lakehouse/Warehouse SQL delta table logs and stage KPIs
-│       ├── users/               # Platform users, RBAC roles (Admin, L1, L2), and login audit
+│       ├── users/               # Unified User Setup: users, RBAC roles (Admin, L1, L2), and workspace support team assignments
 │       ├── websocket/           # WebSocket live streaming and workspace viewer tracking
 │       └── workspaces/          # Workspace discovery, caching, and role-scoped filtering
 ├── fabric_monitor.db            # Local SQLite database (WAL mode)
@@ -139,26 +138,26 @@ The primary telemetry module responsible for ingesting, structuring, and serving
 
 ---
 
-### 4. `users` — User Profiles & Security Roles
-- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/service.py): Manages user accounts, assigns roles (`admin`, `l1`, `l2`), records login timestamps, and bootstraps default system roles and admin accounts.
-- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/repository.py): Database operations for `users` and `roles` tables.
-- [`models/user.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/models/user.py): User ORM entity linked with security roles.
-- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/router.py): User self-management endpoints.
+### 4. `users` — Unified User Setup, Roles & Workspace Support Team Assignments
+The authoritative domain module managing all user lifecycles, security roles, Entra ID directory synchronizations, and workspace-to-support team assignments (consolidating administrative user setup into one cohesive module).
 
----
-
-### 5. `admin` — Workspace Assignments & System Administration
-- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/service.py): Manages assignment of L1 and L2 support engineers to workspaces and parent pipelines, including SLA warning and breach thresholds.
-- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/router.py):
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/service.py):
+  - **User Lifecycle & Sync**: Manages user accounts, assigns roles (`admin`, `l1`, `l2`), records login timestamps, and bootstraps default system roles and admin accounts from settings.
+  - **Access & Role Resolution**: `resolve_access(email)` determines effective role (`admin`, `l1`, `l2`, `none`), admin boolean flag, and scoped workspace IDs.
+  - **Workspace Support Team Assignments**: Manages L1 and L2 support engineer assignments to workspaces (`list_all_assignments`, `list_assignments_for_user`, `upsert_assignment`, `delete_assignment`), including SLA warning and escalation breach thresholds.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/repository.py): Pure SQLAlchemy 2.0 Async ORM database operations for `users`, `roles`, and `user_roles` tables (`selectinload`, `sqlite_upsert`).
+- [`models/`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/models): DeclarativeBase entities for `User`, `Role`, and `UserRole`.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/router.py):
   - `GET /api/admin/assignments`: List all workspace assignments.
-  - `POST /api/admin/assignments`: Create or update support assignments.
+  - `POST /api/admin/assignments`: Create or update support assignments (L1/L2 emails & SLA targets).
   - `DELETE /api/admin/assignments/{workspace_id}`: Remove assignment.
-  - `GET /api/admin/users`: List registered platform users.
-  - `POST /api/admin/users`: Add or update directory user with support role.
-  - `PUT /api/admin/users/role`: Update user role.
-  - `DELETE /api/admin/users`: Remove user.
-  - `GET /api/admin/roles`: List available platform roles.
-- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/schema.py): Assignment and user administration request/response schemas.
+  - `GET /api/admin/users`: List registered platform users and available roles.
+  - `POST /api/admin/users`: Add or update directory user with support role (`l1` or `l2`).
+  - `POST /api/admin/users/role`: Update user support role.
+  - `DELETE /api/admin/users/{email}`: Remove support user from team roster.
+  - `GET /api/roles`: Retrieve all configurable support roles.
+  - `/api/users`: FastAPI-Users profile and self-management endpoints.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/schema.py): Unified schemas for `UserProfile`, `UserResponse`, `RoleResponse`, `AddUserRequest`, `SetRoleRequest`, `UsersListResponse`, `WorkspaceAssignment`, and `AssignmentUpsertRequest`.
 
 ---
 
@@ -227,7 +226,7 @@ The primary telemetry module responsible for ingesting, structuring, and serving
   1. Initializes the FastAPI app with title and metadata.
   2. Configures CORS middleware allowing configured frontend origins.
   3. Registers SlowAPI rate-limiting state.
-  4. Automatically mounts all 10 domain routers under the `/api` prefix.
+  4. Automatically mounts all 9 domain routers under the root and `/api` prefix.
   5. Connects WebSocket endpoints.
   6. Configures application lifecycle event handlers:
      - Initializes SQLite database schema in WAL mode.

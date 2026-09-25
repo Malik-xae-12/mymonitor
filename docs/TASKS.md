@@ -124,3 +124,12 @@
 - [x] **TASK-1209**: Rewrite `docs/TEST_PLAN.md` with complete test verification matrices.
 - [x] **TASK-1210**: Rewrite `docs/SECURITY.md` with authentication, RBAC, and data security controls.
 - [x] **TASK-1211**: Update root `README.md`, `backend/README.md`, and `frontend/README.md`.
+
+---
+
+## Phase 13: Admin & Users Consolidation & Design System Alignment
+- [x] **TASK-1301**: Correct `docs/DESIGN.md` — eliminate all "dark mode" claims and document pure Microsoft Fabric Fluent 2 Light Design System (`#faf9f8` canvas, `#ffffff` cards, `#0f6cbd` brand, `#107c41`/`#c42b1c` status badges, no dark mode).
+- [x] **TASK-1302**: Consolidate `admin` module into `users` module — fold workspace support team assignments (`WorkspaceAssignment`, `AssignmentUpsertRequest`), user management, roles, and Entra ID sync into `app.modules.users`.
+- [x] **TASK-1303**: Update `users/router.py` to handle both user setup and platform admin routes (`/api/admin/assignments`, `/api/admin/users`, `/api/admin/users/role`, `/api/roles`, `/api/users`), maintaining 100% backward compatibility.
+- [x] **TASK-1304**: Update `app_factory.py` to register `users_router` and remove `admin_router`.
+- [x] **TASK-1305**: Verify backend compilation and all API endpoints — **100% PASS**.

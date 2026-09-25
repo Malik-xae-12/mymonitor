@@ -121,3 +121,40 @@ Eliminate the background token refresh scheduler. Token lifecycle is managed str
 ### Consequences
 - **Pros**: Cleaner architecture; zero background token polling overhead; enhanced security compliance.
 - **Cons**: Inactive sessions naturally expire and require re-authentication.
+
+---
+
+## ADR-008: Microsoft Fabric Fluent 2 Light Design System (Zero Dark Mode)
+
+### Context
+Initial documentation inaccurately referenced dark mode mission-control themes. The actual application interface is designed to provide seamless visual continuity for operators working daily in Microsoft Fabric (`app.fabric.microsoft.com`).
+
+### Decision
+Standardize the frontend exclusively on the **Microsoft Fabric Fluent 2 Light Design System**:
+- **Canvas & Surface Palette**: `#faf9f8` canvas, `#ffffff` card/table containers, `#f3f2f1` subheaders/column headers, `#edebe9`/`#e1dfdd` Fluent borders.
+- **Brand Identity**: Microsoft Fabric Brand Blue `#0f6cbd` (hover `#115ea3`, active tint `#eff6fc`).
+- **Typography**: `"Segoe UI Variable Text", "Segoe UI", -apple-system, Roboto, sans-serif` with high-contrast text (`#242424` primary, `#605e5c` secondary).
+- **Semantic Badges**: High-contrast, soft-tinted status badges (`#dff6dd` for succeeded, `#fde7e9` for failed, `#eff6fc` for running, `#f3f2f1` for cancelled/not run).
+- **Explicit Invariant**: There is **no dark mode**; all components adhere strictly to Microsoft Fabric's clean, modern light aesthetic.
+
+### Consequences
+- **Pros**: 100% aesthetic alignment with native Microsoft Fabric; zero cognitive dissonance for Fabric engineers; clean enterprise readability.
+- **Cons**: Users preferring high-contrast dark themes must rely on OS-level contrast tools.
+
+---
+
+## ADR-009: Consolidation of Admin and Users Modules into Unified User Setup Domain
+
+### Context
+Previously, platform administration endpoints (`/api/admin/assignments`, `/api/admin/users`, `/api/admin/users/role`) were divided between an `admin` module and a `users` module. Since workspace L1/L2 assignments, user directory syncing, and role provisioning are all facets of user setup and access governance, maintaining two separate modules caused unnecessary architectural fragmentation.
+
+### Decision
+Consolidate `admin` and `users` into a unified `users` module (`backend/app/modules/users`):
+1. **Unified Schema**: `users/schema.py` defines user profiles, roles, and workspace assignment schemas.
+2. **Unified Service**: `users_service` manages user lifecycles, Entra ID sync, role changes, and workspace support team assignments (`list_all_assignments`, `upsert_assignment`, `delete_assignment`).
+3. **Unified Router**: `users/router.py` mounts `/api/admin/assignments`, `/api/admin/users`, `/api/roles`, and `/api/users/...` routes, preserving 100% backwards compatibility with the frontend.
+4. **Deprecate Separate Admin Router**: Mount `users_router` directly in `app_factory.py`, maintaining lightweight re-exports in `admin/` for backwards compatibility.
+
+### Consequences
+- **Pros**: Cleaner domain boundaries; reduced module fragmentation (9 cohesive modules instead of 10); single source of truth for user access and support assignments.
+- **Cons**: None; full URL route compatibility maintained for all frontend API calls.

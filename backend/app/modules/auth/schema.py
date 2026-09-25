@@ -4,7 +4,7 @@ from fastapi_users import schemas
 from pydantic import BaseModel, Field
 
 
-class UserRead(schemas.BaseUser[uuid.UUID]):
+class UserRead(schemas.BaseUser[str]):
     pass
 
 

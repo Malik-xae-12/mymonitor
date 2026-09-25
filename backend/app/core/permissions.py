@@ -12,17 +12,15 @@ logger = logging.getLogger(__name__)
 
 class RoleName(StrEnum):
     ADMIN = "admin"
-    USER = "user"
+    L1 = "l1"
+    L2 = "l2"
 
 
 def has_role(user: User, *role_names: str) -> bool:
-    """Check if a user has at least one of the specified roles.
-
-    Use this for inline role checks (e.g. scoping queries).
-    For hard-gating endpoints, use require_role() instead.
-    """
-    user_role_names = {role.name for role in user.roles}
-    return bool(user_role_names & set(role_names))
+    """Check if a user has at least one of the specified roles."""
+    if not user.role_id:
+        return False
+    return user.role_id in role_names or (user.role and user.role.name in role_names)
 
 
 def require_role(*allowed_roles: str) -> Callable:
@@ -30,19 +28,14 @@ def require_role(*allowed_roles: str) -> Callable:
 
     Raises 403 Forbidden if the authenticated user does not have
     at least one of the allowed roles.
-
-    Usage:
-        _require_admin = require_role("admin")
-
-        @router.get("/admin-only")
-        async def admin_endpoint(user=Depends(_require_admin)):
-            ...
     """
 
     async def _dependency(
         user: User = Depends(current_active_user),
     ) -> User:
-        user_role_names = {role.name for role in user.roles}
+        user_role_names = {user.role_id} if user.role_id else set()
+        if user.role:
+            user_role_names.add(user.role.name)
         if not user_role_names & set(allowed_roles):
             logger.warning(
                 "Permission denied: user=%s roles=%s required=%s",
@@ -61,4 +54,5 @@ def require_role(*allowed_roles: str) -> Callable:
 # Import and use these directly: user = Depends(require_admin)
 
 require_admin = require_role(RoleName.ADMIN)
-require_user = require_role(RoleName.USER, RoleName.ADMIN)
+require_l1 = require_role(RoleName.L1, RoleName.ADMIN)
+require_l2 = require_role(RoleName.L2, RoleName.ADMIN)

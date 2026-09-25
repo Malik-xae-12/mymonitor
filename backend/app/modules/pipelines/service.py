@@ -1,11 +1,13 @@
+import asyncio
 import datetime
 import logging
 from typing import Any, Dict, List, Optional
 
 from app.modules.pipelines.schema import PipelineSchedule
-from app.services.db_service import db_service
-from app.services.fabric_client import fabric_client
-from app.services.leased_poller import leased_poller
+from app.modules.pipelines.repository import pipeline_repository
+from app.modules.pipelines.poller import leased_poller
+from app.modules.sla.repository import sla_repository
+from app.shared.clients.fabric_client import fabric_client
 
 logger = logging.getLogger("fabric_monitor.pipelines")
 
@@ -61,7 +63,7 @@ class PipelineService:
         if (preset == "latest") and force_sync:
             await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=True)
 
-        date_tree = await db_service.get_workspace_tree_by_date(
+        date_tree = await pipeline_repository.get_workspace_tree_by_date(
             workspace_id=workspace_id,
             date_preset=preset,
             start_date=start_date,
@@ -70,7 +72,7 @@ class PipelineService:
 
         if (preset == "latest") and not date_tree.get("pipelines"):
             await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=False)
-            date_tree = await db_service.get_workspace_tree_by_date(
+            date_tree = await pipeline_repository.get_workspace_tree_by_date(
                 workspace_id=workspace_id,
                 date_preset=preset,
                 start_date=start_date,
@@ -85,7 +87,7 @@ class PipelineService:
 
     async def get_pipeline_history(self, workspace_id: str, pipeline_id: str) -> Dict[str, Any]:
         """Get the chronological execution history for a pipeline."""
-        runs = await db_service.get_pipeline_history(workspace_id, pipeline_id)
+        runs = await pipeline_repository.get_pipeline_history(workspace_id, pipeline_id)
         if not runs:
             instances = await fabric_client.get_job_instances(workspace_id, pipeline_id)
             return {
@@ -105,7 +107,7 @@ class PipelineService:
         all_schedules = _parse_schedules_payload(sched_data)
 
         if not all_schedules:
-            cached = await db_service.get_schedule_for_pipeline(workspace_id, pipeline_id)
+            cached = await pipeline_repository.get_schedule_for_pipeline(workspace_id, pipeline_id)
             if cached:
                 cached_raw = cached.get("rawConfiguration") or {}
                 all_schedules = _parse_schedules_payload(cached_raw)
@@ -137,7 +139,7 @@ class PipelineService:
 
     async def get_workspace_schedules(self, workspace_id: str) -> List[PipelineSchedule]:
         """Returns upcoming schedules and next execution times for pipelines in the workspace."""
-        cached = await db_service.get_pipeline_schedules(workspace_id)
+        cached = await pipeline_repository.get_pipeline_schedules(workspace_id)
         if cached:
             return [PipelineSchedule(**c) for c in cached]
 
@@ -176,32 +178,30 @@ class PipelineService:
                 ))
 
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        await db_service.save_schedules(workspace_id, [s.model_dump() for s in schedules], now_iso)
+        await pipeline_repository.save_schedules(workspace_id, [s.model_dump() for s in schedules], now_iso)
         return schedules
 
     async def list_parent_pipelines(self, workspace_id: str, force_sync: bool = False) -> List[Dict[str, Any]]:
         """Returns parent (master) pipelines for a workspace with their SLA1/SLA2 config."""
-        parents = await db_service.get_parent_pipelines(workspace_id)
+        parents = await pipeline_repository.get_parent_pipelines(workspace_id)
         if not parents or force_sync:
             try:
                 fabric_pipes = await fabric_client.get_pipelines(workspace_id)
                 if fabric_pipes:
                     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    await db_service.save_pipelines(workspace_id, fabric_pipes, now_iso)
-                    try:
-                        await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync)
-                    except Exception:
-                        pass
-                    parents = await db_service.get_parent_pipelines(workspace_id)
+                    await pipeline_repository.save_pipelines(workspace_id, fabric_pipes, now_iso)
+                    parents = await pipeline_repository.get_parent_pipelines(workspace_id)
                     if not parents:
                         parents = [
                             {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
                             for p in fabric_pipes
                         ]
+                    # Asynchronously fetch runs to update hierarchy in the background without blocking the UI
+                    asyncio.create_task(leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync))
             except Exception as exc:
                 logger.error(f"Error syncing parent pipelines from Fabric: {exc}")
 
-        sla_by_pid = await db_service.get_sla_configs_for_workspace(workspace_id)
+        sla_by_pid = await sla_repository.get_sla_configs_for_workspace(workspace_id)
         for p in parents:
             cfg = sla_by_pid.get(p["pipelineId"])
             p["sla1Minutes"] = cfg["sla1Minutes"] if cfg else None
@@ -210,27 +210,25 @@ class PipelineService:
 
     async def get_workspace_pipeline_assignments(self, workspace_id: str, force_sync: bool = False) -> List[Dict[str, Any]]:
         """Returns all parent pipelines for the workspace along with their per-pipeline L1 and L2 assignees."""
-        pipelines = await db_service.get_parent_pipelines(workspace_id)
+        pipelines = await pipeline_repository.get_parent_pipelines(workspace_id)
         if not pipelines or force_sync:
             try:
                 fabric_pipes = await fabric_client.get_pipelines(workspace_id)
                 if fabric_pipes:
                     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    await db_service.save_pipelines(workspace_id, fabric_pipes, now_iso)
-                    try:
-                        await leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync)
-                    except Exception:
-                        pass
-                    pipelines = await db_service.get_parent_pipelines(workspace_id)
+                    await pipeline_repository.save_pipelines(workspace_id, fabric_pipes, now_iso)
+                    pipelines = await pipeline_repository.get_parent_pipelines(workspace_id)
                     if not pipelines:
                         pipelines = [
                             {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
                             for p in fabric_pipes
                         ]
+                    # Asynchronously fetch runs to update hierarchy in the background without blocking the UI
+                    asyncio.create_task(leased_poller.fetch_workspace_snapshot(workspace_id, force_sync=force_sync))
             except Exception as exc:
                 logger.error(f"Error syncing pipelines from Fabric for workspace {workspace_id}: {exc}")
 
-        sla_map = await db_service.get_sla_configs_for_workspace(workspace_id)
+        sla_map = await sla_repository.get_sla_configs_for_workspace(workspace_id)
         results = []
         for p in pipelines:
             pid = p["pipelineId"]

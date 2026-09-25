@@ -63,3 +63,9 @@ export function savePipelineSla(workspaceId, pipelineId, body) {
     body: JSON.stringify(body),
   });
 }
+
+/** Lists pipeline assignments for a workspace (L1/L2 assignees). */
+export function getWorkspacePipelineAssignments(workspaceId, forceSync = false) {
+  return apiFetch(`/api/workspaces/${workspaceId}/pipeline-assignments${forceSync ? '?force_sync=true' : ''}`);
+}
+

@@ -10,7 +10,8 @@ export default function FabricNavRail({
   onNavigateMonitoring,
   isAdmin = false,
   onNavigateAdmin,
-  workspaceName = 'Current Workspace'
+  workspaceName = 'Current Workspace',
+  userRole = 'L1'
 }) {
   const isMonitoringActive = currentView === 'monitoring' || currentView === 'table-logs';
   const isAdminActive = currentView === 'admin';
@@ -27,7 +28,7 @@ export default function FabricNavRail({
         </div>
 
         <nav className="space-y-1">
-          {/* L1: Monitoring Hub (Pipelines Telemetry) */}
+          {/* Monitoring Hub (Pipelines Telemetry) */}
           <button
             type="button"
             onClick={onNavigateMonitoring}
@@ -48,7 +49,7 @@ export default function FabricNavRail({
                 ? "bg-[#ebf3fc] text-[#0f6cbd]" 
                 : "bg-[#e1dfdd] text-[#605e5c]"
             }`}>
-              L1
+              {userRole}
             </span>
           </button>
 

@@ -14,8 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.csrf import CSRFMiddleware
 from app.core.events import create_database
-from app.core.exceptions import register_exception_handlers
-from app.core.rate_limit import limiter
+from app.core.rate_limiter import limiter
 from app.modules.admin.router import router as admin_router
 from app.modules.auth.router import router as auth_router
 from app.modules.diagnostics.router import router as diagnostics_router
@@ -27,9 +26,8 @@ from app.modules.users.router import router as users_router
 from app.modules.users.service import users_service
 from app.modules.websocket.router import router as websocket_router
 from app.modules.workspaces.router import router as workspaces_router
-from app.services.alert_service import alert_service
-from app.services.db_service import db_service
-from app.services.leased_poller import leased_poller
+from app.modules.sla.alert_service import alert_service
+from app.modules.pipelines.poller import leased_poller
 from app.shared.constants import AUTH_URL_PATH
 
 logger = logging.getLogger("fabric_monitor")
@@ -43,11 +41,10 @@ def simple_generate_unique_route_id(route: APIRoute) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Microsoft Fabric Real-Time Monitoring Hub...")
-    # 1. Initialize starter SQLite DB tables (users, roles, tokens, etc.)
+    # 1. Initialize SQLite DB tables for all modules (users, roles, pipelines, SLA, etc.)
     await create_database()
 
-    # 2. Initialize Fabric Monitoring SQLite DB & seed admin users
-    await db_service.init_db()
+    # 2. Seed admin users
     admin_emails = [e.strip() for e in (settings.ADMIN_EMAILS or "").split(",") if e.strip()]
     await users_service.seed_defaults(admin_emails)
 
@@ -78,11 +75,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Calculate allowed CORS origins
-    cors_list: List[str] = []
-    if settings.CORS_ORIGINS:
-        cors_list.extend(list(settings.CORS_ORIGINS))
-    if hasattr(settings, "ALLOWED_ORIGINS") and settings.ALLOWED_ORIGINS:
-        cors_list.extend([o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()])
+    cors_list: List[str] = list(settings.CORS_ORIGINS) if settings.CORS_ORIGINS else []
     if settings.FRONTEND_URL and settings.FRONTEND_URL not in cors_list:
         cors_list.append(settings.FRONTEND_URL)
 
@@ -127,7 +120,6 @@ def create_app() -> FastAPI:
             "poller_active": leased_poller._is_running,
         }
 
-    register_exception_handlers(app)
     add_pagination(app)
 
     # Mount static frontend build if present

@@ -23,6 +23,8 @@ import {
   X,
   FileSpreadsheet
 } from 'lucide-react';
+import { getTableLogAiFix } from '../api';
+import { apiFetch } from '../../../services/api/apiClient';
 
 export default function TableLogsPage({ 
   workspaceId, 
@@ -64,31 +66,20 @@ export default function TableLogsPage({
     setIsLoadingTableAi(true);
     setTableAiError(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/diagnostics/ai-fix`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pipelineName: data?.batchHeader?.pipelineName || pipeline?.pipelineName || 'Pipeline',
-          activityName: `${row.layer}_${row.tableName}`,
-          activityType: `${row.layer} Layer Ingestion (${row.operation || 'Data Load'})`,
-          errorCode: 'TableLoadFailure',
-          errorMessage: row.errorMessage || 'Table extraction or loading failed.',
-          failureType: 'DataLoadError',
-          target: `${row.schema}.${row.tableName}`,
-          rawError: row.rawData
-        })
+      const json = await getTableLogAiFix(workspaceId, {
+        pipelineName: data?.batchHeader?.pipelineName || pipeline?.pipelineName || 'Pipeline',
+        activityName: `${row.layer}_${row.tableName}`,
+        activityType: `${row.layer} Layer Ingestion (${row.operation || 'Data Load'})`,
+        errorCode: 'TableLoadFailure',
+        errorMessage: row.errorMessage || 'Table extraction or loading failed.',
+        failureType: 'DataLoadError',
+        target: `${row.schema}.${row.tableName}`,
+        rawError: row.rawData
       });
-
-      if (res.ok) {
-        const json = await res.json();
-        setTableAiData(json);
-      } else {
-        const err = await res.json().catch(() => ({ detail: 'Failed to contact AI service' }));
-        setTableAiError(err.detail || 'Could not retrieve AI diagnostic.');
-      }
+      setTableAiData(json);
     } catch (err) {
       console.error("Table AI diagnostics error:", err);
-      setTableAiError("Network error while connecting to AI diagnostic service.");
+      setTableAiError(err.message || "Network error while connecting to AI diagnostic service.");
     } finally {
       setIsLoadingTableAi(false);
     }
@@ -99,21 +90,16 @@ export default function TableLogsPage({
     setIsLoading(true);
     setError(null);
 
-    let url = `/api/workspaces/${workspaceId}/table-logs?`;
     const targetBatch = overrideBatchId !== null ? overrideBatchId : selectedBatchId;
+    const params = new URLSearchParams();
     if (targetBatch) {
-      url += `batch_id=${encodeURIComponent(targetBatch)}`;
+      params.set('batch_id', targetBatch);
     } else if (pipelineRunId) {
-      url += `pipeline_run_id=${encodeURIComponent(pipelineRunId)}`;
+      params.set('pipeline_run_id', pipelineRunId);
     }
 
     try {
-      const res = await fetch(url);
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ detail: 'Failed to fetch table logs' }));
-        throw new Error(errJson.detail || 'Network error fetching table logs');
-      }
-      const json = await res.json();
+      const json = await apiFetch(`/api/workspaces/${workspaceId}/table-logs?${params.toString()}`);
       setData(json);
       if (json?.batchHeader?.batchId && !overrideBatchId && !selectedBatchId) {
         setSelectedBatchId(json.batchHeader.batchId);

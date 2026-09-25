@@ -1,6 +1,5 @@
 # Environment Variables (Secrets)
 .env
-*.env
 *.env.local
 
 # Python
@@ -9,24 +8,19 @@ __pycache__/
 *$py.class
 backend/venv/
 venv/
-env/
 .pytest_cache/
 
 # Local SQLite Database
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm
-*.db
 *.sqlite3
-next-fastapi-starter/
 
 # Frontend dependencies & build output
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # IDE & OS
 .vscode/
@@ -34,4 +28,5 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Agents
 .agents

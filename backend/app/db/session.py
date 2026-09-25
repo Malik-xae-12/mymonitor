@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 from app.core.config import settings
 from app.db.base import Base
-from app.db import models_import  # noqa: F401  — registers all models on Base.metadata
 from app.modules.users.models.user import User
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -21,8 +20,8 @@ def _resolve_db_url(url: str) -> str:
     if url.startswith("sqlite"):
         prefix, _, path = url.partition(":///")
         if path and not os.path.isabs(path):
-            backend_dir = Path(__file__).resolve().parent.parent
-            abs_path = str(backend_dir / path)
+            backend_dir = Path(__file__).resolve().parent.parent.parent
+            abs_path = str(backend_dir / path.lstrip("./"))
             return f"{prefix}:///{abs_path}"
     return url
 
@@ -32,6 +31,16 @@ def _get_db_url() -> str:
     if settings.PROD and settings.PROD_DATABASE_URL:
         return settings.PROD_DATABASE_URL
     return _resolve_db_url(settings.DATABASE_URL)
+
+
+def get_sqlite_path() -> str:
+    """Extract resolved local filesystem SQLite database path from DATABASE_URL."""
+    resolved = _get_db_url()
+    if "sqlite" in resolved:
+        _, _, path = resolved.partition(":///")
+        if path:
+            return path
+    return str(Path(__file__).resolve().parent.parent.parent / "fabric_monitor.db")
 
 
 _db_url = _get_db_url()
@@ -52,8 +61,13 @@ async_session_maker = async_sessionmaker(
 )
 
 async def create_db_and_tables() -> None:
+    import app.db.models_import  # noqa: F401  — registers all models on Base.metadata
     try:
         async with engine.begin() as conn:
+            if "sqlite" in _db_url:
+                await conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
+                await conn.exec_driver_sql("PRAGMA synchronous=NORMAL;")
+                await conn.exec_driver_sql("PRAGMA busy_timeout=30000;")
             await conn.run_sync(Base.metadata.create_all)
     except (OperationalError, ProgrammingError) as e:
         # Ignore race conditions when multiple workers try to create the same tables simultaneously

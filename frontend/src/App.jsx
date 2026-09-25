@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FabricSuiteBar, FabricNavRail, FabricDetailSidePane } from './components/layout';
 import { 
   WorkspaceSelector, 
@@ -92,11 +92,14 @@ export default function App() {
     }
   }, [workspaceId, scopedWorkspaces, isAdmin]);
 
-  // Admins land on the setup console the first time their role resolves. Non-admins cannot access admin.
+  const hasInitialLandedRef = useRef(false);
+
+  // Admins land on the setup console on initial load, but can freely navigate to Monitoring hub.
   useEffect(() => {
-    if (isAdmin) {
-      setCurrentView((v) => (v === 'monitoring' ? 'admin' : v));
-    } else if (currentView === 'admin' || currentView === 'table-log-config') {
+    if (isAdmin && !hasInitialLandedRef.current) {
+      hasInitialLandedRef.current = true;
+      setCurrentView('admin');
+    } else if (!isAdmin && (currentView === 'admin' || currentView === 'table-log-config')) {
       setCurrentView('monitoring');
     }
   }, [isAdmin, currentView]);
@@ -224,6 +227,7 @@ export default function App() {
             isAdmin={isAdmin}
             onNavigateAdmin={() => setCurrentView('admin')}
             workspaceName={currentWorkspaceName}
+            userRole={isAdmin ? 'Admin' : (role ? role.toUpperCase() : 'L1')}
           />
 
           {currentView === 'admin' && isAdmin ? (

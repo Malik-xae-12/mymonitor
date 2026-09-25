@@ -10,8 +10,7 @@ from fastapi_users.exceptions import UserNotExists
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.permissions import RoleName
-from app.core.rate_limit import limiter
+from app.core.rate_limiter import limiter
 from app.core.tokens import (
     create_access_token,
     create_refresh_token,
@@ -19,7 +18,6 @@ from app.core.tokens import (
     rotate_refresh_token,
 )
 from app.db.session import get_async_session
-from app.modules.users.service import assign_role_to_user
 from app.modules.auth.schema import (
         EntraIdExchangeRequest,
         RefreshRequest,
@@ -260,17 +258,16 @@ async def exchange_entra_id_token(
         temp_password = f"SSO!Temp_{random_suffix}"
         user_create = UserCreate(email=email, password=temp_password)
         user = await user_manager.create(user_create, safe=True)
-        # Mark as SSO user
-        user.is_sso = True
         user.is_verified = True
+        user.oid = azure_oid
+        user.display_name = claims.get("name")
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        await assign_role_to_user(db, str(user.id), RoleName.USER)
 
     # Store / update the Azure AD object ID
-    if azure_oid and user.azure_oid != azure_oid:
-        user.azure_oid = azure_oid
+    if azure_oid and user.oid != azure_oid:
+        user.oid = azure_oid
         db.add(user)
         await db.commit()
         await db.refresh(user)

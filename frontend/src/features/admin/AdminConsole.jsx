@@ -25,6 +25,8 @@ export default function AdminConsole({ onOpenTableConfig }) {
           return (
             <button
               key={id}
+              type="button"
+              id={`admin-tab-${id}`}
               onClick={() => setTab(id)}
               className={`relative flex items-center gap-2 px-4 py-3 text-xs font-semibold transition ${
                 active ? 'text-[#0f6cbd]' : 'text-[#605e5c] hover:text-[#242424]'

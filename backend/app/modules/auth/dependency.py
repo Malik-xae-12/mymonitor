@@ -94,8 +94,8 @@ async def current_active_user(
 
     result = await db.execute(
         select(User)
-        .options(selectinload(User.roles))
-        .where(User.id == uuid.UUID(user_id), User.is_active == True)
+        .options(selectinload(User.role))
+        .where(User.id == str(user_id), User.is_active == True)
     )
     user = result.scalar_one_or_none()
 

@@ -5,7 +5,7 @@ from app.modules.auth.schema import (
     WorkspaceAssignment,
 )
 from app.modules.users.service import users_service
-from app.services.db_service import db_service
+from app.modules.workspaces.repository import workspace_repository
 
 
 def _now() -> str:
@@ -14,27 +14,27 @@ def _now() -> str:
 
 class AuthAssignmentsService:
     async def list_all_assignments(self) -> List[WorkspaceAssignment]:
-        rows = await db_service.get_all_assignments()
+        rows = await workspace_repository.get_all_assignments()
         return [self._to_model(r) for r in rows]
 
     async def list_assignments_for_user(self, email: str) -> List[WorkspaceAssignment]:
-        rows = await db_service.get_assignments_for_user(email)
+        rows = await workspace_repository.get_assignments_for_user(email)
         return [self._to_model(r) for r in rows]
 
     async def upsert_assignment(
         self, payload: AssignmentUpsertRequest, assigned_by: str
     ) -> WorkspaceAssignment:
-        await db_service.upsert_assignment(
+        await workspace_repository.upsert_assignment(
             data=payload.model_dump(),
             assigned_by=assigned_by,
             when=_now(),
         )
         await users_service.ensure_assignment_users(payload.l1_email, payload.l2_email)
-        row = await db_service.get_assignment(payload.workspace_id)
+        row = await workspace_repository.get_assignment(payload.workspace_id)
         return self._to_model(row)
 
     async def delete_assignment(self, workspace_id: str) -> None:
-        await db_service.delete_assignment(workspace_id)
+        await workspace_repository.delete_assignment(workspace_id)
 
     @staticmethod
     def _to_model(row: dict) -> WorkspaceAssignment:

@@ -22,6 +22,14 @@ import {
   Server,
   FolderTree
 } from 'lucide-react';
+import { 
+  getDataArtifacts, 
+  getTableLogMapping, 
+  saveTableLogMapping, 
+  deleteTableLogMapping, 
+  getSqlTables, 
+  getSqlColumns 
+} from '../api';
 
 export default function TableLogConfigPage({ 
   workspaceId, 
@@ -87,19 +95,13 @@ export default function TableLogConfigPage({
       setStatusMsg(null);
       try {
         // 1. Fetch artifacts (warehouses & lakehouses)
-        const artRes = await fetch(`/api/workspaces/${workspaceId}/data-artifacts`);
-        let artList = [];
-        if (artRes.ok) {
-          const artJson = await artRes.json();
-          artList = artJson.artifacts || [];
-          setArtifacts(artList);
-        }
+        const artJson = await getDataArtifacts(workspaceId).catch(() => ({ artifacts: [] }));
+        const artList = artJson.artifacts || [];
+        setArtifacts(artList);
 
         // 2. Fetch existing mapping from database if previously configured
-        const mapRes = await fetch(`/api/workspaces/${workspaceId}/table-log-mapping`);
-        if (mapRes.ok) {
-          const mapJson = await mapRes.json();
-          if (mapJson.mapping) {
+        const mapJson = await getTableLogMapping(workspaceId).catch(() => ({ mapping: null }));
+        if (mapJson?.mapping) {
             const m = mapJson.mapping;
             setSelectedArtifactId(m.artifact_id || '');
             const bhFull = (m.batch_header_schema && m.batch_header_table) ? `${m.batch_header_schema}.${m.batch_header_table}` : '';
@@ -119,7 +121,6 @@ export default function TableLogConfigPage({
               return;
             }
           }
-        }
       } catch (err) {
         console.error("Error loading config:", err);
         setStatusMsg({ type: 'error', text: 'Failed to load workspace data sources.' });
@@ -144,46 +145,31 @@ export default function TableLogConfigPage({
     setAvailableTables([]);
 
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/tables`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverFqdn, databaseName }),
-        signal: abortCtrl.signal
-      });
+      const json = await getSqlTables(workspaceId, { serverFqdn, databaseName, signal: abortCtrl.signal });
+      if (currentReqId !== activeReqIdRef.current) return;
+      const tbls = json?.tables || [];
+      setAvailableTables(tbls);
 
-      if (currentReqId !== activeReqIdRef.current) {
-        return; // Superseded by a newer selection
+      if (preBH) {
+        setBatchHeaderTable(preBH);
+        const [s, t] = preBH.split('.');
+        fetchCols(serverFqdn, databaseName, s, t, setBatchHeaderCols);
       }
-
-      if (res.ok) {
-        const json = await res.json();
-        const tbls = json.tables || [];
-        setAvailableTables(tbls);
-
-        if (preBH) {
-          setBatchHeaderTable(preBH);
-          const [s, t] = preBH.split('.');
-          fetchCols(serverFqdn, databaseName, s, t, setBatchHeaderCols);
-        }
-        if (preBR) {
-          setBronzeTable(preBR);
-          const [s, t] = preBR.split('.');
-          fetchCols(serverFqdn, databaseName, s, t, setBronzeCols);
-        }
-        if (preSL) {
-          setSilverTable(preSL);
-          const [s, t] = preSL.split('.');
-          fetchCols(serverFqdn, databaseName, s, t, setSilverCols);
-        }
-      } else {
-        const errJson = await res.json().catch(() => ({}));
-        setStatusMsg({ type: 'error', text: extractErrorText(errJson, 'Could not connect to SQL Endpoint to fetch tables.') });
+      if (preBR) {
+        setBronzeTable(preBR);
+        const [s, t] = preBR.split('.');
+        fetchCols(serverFqdn, databaseName, s, t, setBronzeCols);
+      }
+      if (preSL) {
+        setSilverTable(preSL);
+        const [s, t] = preSL.split('.');
+        fetchCols(serverFqdn, databaseName, s, t, setSilverCols);
       }
     } catch (e) {
       if (e.name === 'AbortError') return;
       if (currentReqId !== activeReqIdRef.current) return;
       console.error("Failed to fetch tables:", e);
-      setStatusMsg({ type: 'error', text: 'Could not connect to SQL Endpoint to fetch tables.' });
+      setStatusMsg({ type: 'error', text: extractErrorText(e, 'Could not connect to SQL Endpoint to fetch tables.') });
     } finally {
       if (currentReqId === activeReqIdRef.current) {
         setIsLoadingTables(false);
@@ -197,21 +183,11 @@ export default function TableLogConfigPage({
       return;
     }
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/sql-metadata/columns`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverFqdn, databaseName, schemaName, tableName })
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setColState(json.columns || []);
-      } else {
-        const errJson = await res.json().catch(() => ({}));
-        setStatusMsg({ type: 'error', text: extractErrorText(errJson, `Could not fetch columns for ${schemaName}.${tableName}.`) });
-      }
+      const json = await getSqlColumns(workspaceId, { serverFqdn, databaseName, schemaName, tableName });
+      setColState(json?.columns || []);
     } catch (e) {
       console.error(`Failed to fetch columns for ${schemaName}.${tableName}:`, e);
-      setStatusMsg({ type: 'error', text: `Failed to fetch columns for ${schemaName}.${tableName}.` });
+      setStatusMsg({ type: 'error', text: extractErrorText(e, `Could not fetch columns for ${schemaName}.${tableName}.`) });
     }
   };
 
@@ -396,21 +372,12 @@ export default function TableLogConfigPage({
     };
 
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/table-log-mapping`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        setStatusMsg({ type: 'success', text: 'Column mapping successfully saved and applied to Monitoring hub!' });
-        if (onSaved) onSaved();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setStatusMsg({ type: 'error', text: extractErrorText(err, 'Failed to save mapping.') });
-      }
+      await saveTableLogMapping(workspaceId, payload);
+      setStatusMsg({ type: 'success', text: 'Column mapping successfully saved and applied to Monitoring hub!' });
+      if (onSaved) onSaved();
     } catch (e) {
       console.error("Save error:", e);
-      setStatusMsg({ type: 'error', text: 'Network error saving mapping.' });
+      setStatusMsg({ type: 'error', text: extractErrorText(e, 'Failed to save mapping.') });
     } finally {
       setIsSaving(false);
     }
@@ -421,22 +388,18 @@ export default function TableLogConfigPage({
     setIsSaving(true);
     setStatusMsg(null);
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/table-log-mapping`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        setStatusMsg({ type: 'success', text: 'Mapping reset. Default fallback schema will be used.' });
-        setBatchHeaderTable('');
-        setBronzeTable('');
-        setSilverTable('');
-        setBatchHeaderMapping({});
-        setBronzeMapping({});
-        setSilverMapping({});
-        if (onSaved) onSaved();
-      }
+      await deleteTableLogMapping(workspaceId);
+      setStatusMsg({ type: 'success', text: 'Mapping reset. Default fallback schema will be used.' });
+      setBatchHeaderTable('');
+      setBronzeTable('');
+      setSilverTable('');
+      setBatchHeaderMapping({});
+      setBronzeMapping({});
+      setSilverMapping({});
+      if (onSaved) onSaved();
     } catch (e) {
       console.error("Reset error:", e);
-      setStatusMsg({ type: 'error', text: 'Failed to reset mapping.' });
+      setStatusMsg({ type: 'error', text: extractErrorText(e, 'Failed to reset mapping.') });
     } finally {
       setIsSaving(false);
     }

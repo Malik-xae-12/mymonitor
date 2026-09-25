@@ -4,16 +4,16 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.modules.sla.schema import IncidentResolveRequest, SlaConfigPayload, TestEmailRequest
-from app.services.alert_service import alert_service
-from app.services.connection_manager import connection_manager
-from app.services.db_service import db_service
+from app.modules.sla.repository import sla_repository
+from app.modules.sla.alert_service import alert_service
+from app.modules.websocket.connection_manager import connection_manager
 
 logger = logging.getLogger("fabric_monitor.sla")
 
 
 class SlaService:
     async def get_sla_config(self, workspace_id: str, pipeline_id: str) -> Optional[Dict[str, Any]]:
-        return await db_service.get_sla_config(workspace_id, pipeline_id)
+        return await sla_repository.get_sla_config(workspace_id, pipeline_id)
 
     async def save_sla_config(self, workspace_id: str, pipeline_id: str, payload: SlaConfigPayload) -> Dict[str, Any]:
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -24,7 +24,7 @@ class SlaService:
         l1_name = (payload.l1Name or "").strip()
         l2_name = (payload.l2Name or "").strip()
 
-        await db_service.save_sla_config(
+        await sla_repository.save_sla_config(
             workspace_id=workspace_id,
             pipeline_id=pipeline_id,
             l1_email=l1_email,
@@ -64,10 +64,10 @@ class SlaService:
         }
 
     async def get_workspace_incidents(self, workspace_id: str) -> List[Dict[str, Any]]:
-        return await db_service.get_active_incidents(workspace_id)
+        return await sla_repository.get_active_incidents(workspace_id)
 
     async def get_all_incidents(self) -> List[Dict[str, Any]]:
-        return await db_service.get_active_incidents()
+        return await sla_repository.get_active_incidents()
 
     async def resolve_incident(self, incident_id: str, resolved_by: str = "Operator", workspace_id: Optional[str] = None) -> Dict[str, Any]:
         result = await alert_service.resolve_incident(incident_id, resolved_by=resolved_by)

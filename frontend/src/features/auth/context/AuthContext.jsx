@@ -2,7 +2,7 @@ import React, { createContext, useContext, useCallback, useEffect, useState } fr
 import { useMsal, useIsAuthenticated } from '@azure/msal-react';
 import { InteractionStatus } from '@azure/msal-browser';
 import { loginRequest, authEnabled } from '../../../config/authConfig';
-import { apiFetch } from '../../../services/api/apiClient';
+import { getCurrentUser } from '../api';
 
 const AuthContext = createContext(null);
 
@@ -22,7 +22,7 @@ export function AuthProvider({ children }) {
     setLoading(true);
     setError(null);
     try {
-      const me = await apiFetch('/api/auth/me');
+      const me = await getCurrentUser();
       setProfile(me);
     } catch (err) {
       setError(err);

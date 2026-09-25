@@ -21,9 +21,7 @@ from fastapi_users.authentication import (
 from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.core.config import settings
-from app.core.permissions import RoleName
 from app.core.security import validate_password_rules
-from app.modules.users.service import assign_role_to_user
 from app.db.session import get_user_db, get_async_session
 from app.modules.users.models.user import User
 from app.modules.auth.schema import UserCreate
@@ -45,7 +43,7 @@ def get_email_config() -> ConnectionConfig:
         MAIL_SSL_TLS=settings.MAIL_SSL_TLS,
         USE_CREDENTIALS=settings.USE_CREDENTIALS,
         VALIDATE_CERTS=settings.VALIDATE_CERTS,
-        TEMPLATE_FOLDER=Path(__file__).parent / settings.TEMPLATE_DIR,
+        TEMPLATE_FOLDER=Path(__file__).parent / "email_templates",
     )
 
 
@@ -76,26 +74,24 @@ async def send_reset_password_email(user: User, token: str) -> None:
     await fm.send_message(message, template_name="password_reset.html")
 
 
-class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
+class StringIDMixin:
+    def parse_id(self, value: any) -> str:
+        return str(value)
+
+
+class UserManager(StringIDMixin, BaseUserManager[User, str]):
     reset_password_token_secret = settings.RESET_PASSWORD_SECRET_KEY
     verification_token_secret = settings.VERIFICATION_SECRET_KEY
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        print(f"User {user.id} has registered.")
-        # Assign default "user" role
-        if hasattr(self, "user_db") and hasattr(self.user_db, "session"):
-            await assign_role_to_user(self.user_db.session, str(user.id), RoleName.USER)
-        else:
-            async for db in get_async_session():
-                await assign_role_to_user(db, str(user.id), RoleName.USER)
-                break
+        logger.info("User %s has registered.", user.id)
 
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
     ):
         try:
             await send_reset_password_email(user, token)
-            logger.info(f"Password reset email sent to {user.email}")
+            logger.info("Password reset email sent to %s", user.email)
         except Exception as exc:
             logger.error(
                 "Failed to send password reset email to %s: %s: %s",
@@ -105,9 +101,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        print(
-            f"Verification requested for user {user.id}. Verification token: {token}"
-        )
+        logger.info("Verification requested for user %s", user.id)
 
     async def validate_password(
         self,
@@ -140,4 +134,4 @@ auth_backend = AuthenticationBackend(
     get_strategy=get_jwt_strategy,
 )
 
-fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
+fastapi_users = FastAPIUsers[User, str](get_user_manager, [auth_backend])

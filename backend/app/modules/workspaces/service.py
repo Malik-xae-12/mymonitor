@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List
-from app.services.db_service import db_service
-from app.services.fabric_client import fabric_client
+from app.modules.workspaces.repository import workspace_repository
+from app.shared.clients.fabric_client import fabric_client
 
 logger = logging.getLogger("fabric_monitor.workspaces")
 
@@ -10,7 +10,7 @@ class WorkspaceService:
     async def list_workspaces(self) -> List[Dict[str, Any]]:
         workspaces = await fabric_client.get_workspaces()
         try:
-            assignments = await db_service.get_all_assignments()
+            assignments = await workspace_repository.get_all_assignments()
             assign_map = {a["workspace_id"]: a for a in assignments if "workspace_id" in a}
         except Exception:
             assign_map = {}

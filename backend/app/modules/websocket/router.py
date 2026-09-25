@@ -1,8 +1,7 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import datetime
 import logging
-from app.services.connection_manager import connection_manager
-from app.services.leased_poller import leased_poller
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from app.modules.websocket.connection_manager import connection_manager
 
 logger = logging.getLogger("fabric_monitor.ws")
 router = APIRouter(tags=["websockets"])
@@ -10,6 +9,8 @@ router = APIRouter(tags=["websockets"])
 
 @router.websocket("/ws/workspaces/{workspace_id}")
 async def workspace_websocket_endpoint(websocket: WebSocket, workspace_id: str):
+    from app.modules.pipelines.poller import leased_poller
+
     await connection_manager.connect(workspace_id, websocket)
     try:
         # Send an immediate snapshot right upon connection so user sees instant state

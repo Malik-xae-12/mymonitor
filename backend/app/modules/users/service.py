@@ -2,14 +2,12 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import IntegrityError
 import aiosqlite
 
-from app.core.permissions import RoleName
 from app.modules.users import repository
 from app.modules.users.fabric_users_repo import fabric_users_repository
 from app.modules.users.schema import RoleResponse, UserResponse
-from app.services.db_service import db_service
+from app.modules.workspaces.repository import workspace_repository
 
 logger = logging.getLogger(__name__)
 
@@ -20,32 +18,9 @@ DEFAULT_ROLES = [
 ]
 
 
-async def seed_roles(db: AsyncSession) -> None:
-    """Ensure all defined roles exist in the database."""
-    try:
-        for role_name in RoleName:
-            existing = await repository.get_role_by_name(db, role_name.value)
-            if existing is None:
-                await repository.create_role(db, role_name.value, f"{role_name.value} role")
-        await repository.commit(db)
-    except IntegrityError:
-        await db.rollback()
-        logger.warning("Ignored IntegrityError in seed_roles (likely a multi-worker race condition)")
-
-
-async def assign_role_to_user(db: AsyncSession, user_id: str, role_name: str) -> bool:
-    """Assign a role to a user. Returns False if role not found or already assigned."""
-    role = await repository.get_role_by_name(db, role_name)
-    if not role:
-        return False
-
-    existing = await repository.get_user_role(db, user_id, role.id)
-    if existing:
-        return False
-
-    await repository.create_user_role(db, user_id, role.id)
-    logger.info("Role '%s' assigned to user %s", role_name, user_id)
-    return True
+async def assign_role_to_user(db: AsyncSession, user_id: str, role_id: str) -> bool:
+    """Assign a role (admin, l1, l2) to a user."""
+    return await repository.assign_role_to_user(db, user_id, role_id)
 
 
 class UsersService:
@@ -67,10 +42,10 @@ class UsersService:
         if user and user.get("role_id") == "admin":
             return "admin", True, []
 
-        workspace_ids = await db_service.get_assigned_workspace_ids_for_user(e)
+        workspace_ids = await workspace_repository.get_assigned_workspace_ids_for_user(e)
 
         role = "none"
-        assignments = await db_service.get_assignments_for_user(e)
+        assignments = await workspace_repository.get_assignments_for_user(e)
         for a in assignments:
             if (a.get("l1_email") or "").strip().lower() == e:
                 role = "l1"
@@ -79,7 +54,7 @@ class UsersService:
                 role = "l2"
 
         if role == "none":
-            async with aiosqlite.connect(db_service.db_path) as db:
+            async with aiosqlite.connect(workspace_repository.db_path) as db:
                 c1 = await db.execute("SELECT 1 FROM sla_configs WHERE LOWER(l1_email) = ? LIMIT 1", (e,))
                 if await c1.fetchone():
                     role = "l1"

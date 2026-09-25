@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { getWorkspaceSnapshot, resolveIncident as resolveIncidentApi } from '../features/monitoring/api';
 
 const EMPTY_METRICS = {
   total: 0,
@@ -65,13 +66,14 @@ export function useWorkspaceMonitoring(
     const preset = filter?.preset || 'latest';
     const sDt = filter?.startDate || '';
     const eDt = filter?.endDate || '';
-    const url = `/api/workspaces/${targetWorkspaceId}/snapshot?date_preset=${encodeURIComponent(preset)}&start_date=${encodeURIComponent(sDt)}&end_date=${encodeURIComponent(eDt)}`;
 
-    fetch(url, { signal: abortController.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    getWorkspaceSnapshot(targetWorkspaceId, {
+      forceSync: false,
+      datePreset: preset,
+      startDate: sDt,
+      endDate: eDt,
+      signal: abortController.signal
+    })
       .then((json) => {
         if (activeWorkspaceIdRef.current === targetWorkspaceId) {
           const incoming = json.pipelines || [];
@@ -307,29 +309,23 @@ export function useWorkspaceMonitoring(
   const resolveIncident = async (incidentId) => {
     if (!workspaceId || !incidentId) return;
     try {
-      const res = await fetch(`/api/workspaces/${workspaceId}/incidents/${incidentId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resolvedBy: 'Operator' })
-      });
-      if (res.ok) {
-        setPipelineTree((prev) =>
-          prev.map((p) => {
-            if (p.incident && p.incident.id === incidentId) {
-              return {
-                ...p,
-                incident: {
-                  ...p.incident,
-                  status: 'RESOLVED',
-                  resolvedBy: 'Operator',
-                  resolvedAt: new Date().toISOString()
-                }
-              };
-            }
-            return p;
-          })
-        );
-      }
+      await resolveIncidentApi(workspaceId, incidentId, { resolvedBy: 'Operator' });
+      setPipelineTree((prev) =>
+        prev.map((p) => {
+          if (p.incident && p.incident.id === incidentId) {
+            return {
+              ...p,
+              incident: {
+                ...p.incident,
+                status: 'RESOLVED',
+                resolvedBy: 'Operator',
+                resolvedAt: new Date().toISOString()
+              }
+            };
+          }
+          return p;
+        })
+      );
     } catch (e) {
       console.error('Resolve incident error:', e);
     }
@@ -341,8 +337,12 @@ export function useWorkspaceMonitoring(
       const preset = dateFilterRef.current?.preset || 'latest';
       const sDt = dateFilterRef.current?.startDate || '';
       const eDt = dateFilterRef.current?.endDate || '';
-      fetch(`/api/workspaces/${workspaceId}/snapshot?force_sync=true&date_preset=${encodeURIComponent(preset)}&start_date=${encodeURIComponent(sDt)}&end_date=${encodeURIComponent(eDt)}`)
-        .then((res) => res.json())
+      getWorkspaceSnapshot(workspaceId, {
+        forceSync: true,
+        datePreset: preset,
+        startDate: sDt,
+        endDate: eDt
+      })
         .then((json) => {
           if (activeWorkspaceIdRef.current === workspaceId) {
             setPipelineTree(json.pipelines || []);

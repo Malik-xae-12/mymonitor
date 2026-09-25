@@ -1,7 +1,8 @@
 import datetime
 from typing import Any, Dict, List, Optional
+import uuid
 import aiosqlite
-from app.core.config import settings
+from app.db.session import get_sqlite_path
 
 
 def _now() -> str:
@@ -10,7 +11,11 @@ def _now() -> str:
 
 class UsersRepository:
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = db_path or settings.SQLITE_DB_PATH
+        self._db_path = db_path
+
+    @property
+    def db_path(self) -> str:
+        return self._db_path or get_sqlite_path()
 
     # ---- Roles -------------------------------------------------------
     async def seed_roles(self, roles: List[Dict[str, str]]) -> None:
@@ -62,17 +67,18 @@ class UsersRepository:
         clean = (email or "").lower().strip()
         if not clean:
             return
+        user_id = str(uuid.uuid4())
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO users (email, oid, display_name, created_at, last_login_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO users (id, email, oid, display_name, created_at, last_login_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(email) DO UPDATE SET
                     oid = CASE WHEN excluded.oid <> '' THEN excluded.oid ELSE users.oid END,
                     display_name = CASE WHEN excluded.display_name <> '' THEN excluded.display_name ELSE users.display_name END,
                     last_login_at = excluded.last_login_at
                 """,
-                (clean, oid or "", display_name or "", now, now),
+                (user_id, clean, oid or "", display_name or "", now, now),
             )
             await db.commit()
 
@@ -83,26 +89,36 @@ class UsersRepository:
         clean = (email or "").lower().strip()
         if not clean:
             return
+        user_id = str(uuid.uuid4())
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO users (email, oid, display_name, role_id, created_at, last_login_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO users (id, email, oid, display_name, role_id, created_at, last_login_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(email) DO UPDATE SET
                     display_name = CASE WHEN excluded.display_name <> '' THEN excluded.display_name ELSE users.display_name END,
                     oid = CASE WHEN excluded.oid <> '' THEN excluded.oid ELSE users.oid END,
                     role_id = excluded.role_id
                 """,
-                (clean, oid or "", display_name or "", role_id, now, now),
+                (user_id, clean, oid or "", display_name or "", role_id, now, now),
             )
             await db.commit()
 
     async def set_role(self, email: str, role_id: str) -> None:
         clean = (email or "").lower().strip()
+        if not clean:
+            return
+        user_id = str(uuid.uuid4())
+        now = _now()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "UPDATE users SET role_id = ? WHERE email = ?",
-                (role_id, clean),
+                """
+                INSERT INTO users (id, email, role_id, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET
+                    role_id = excluded.role_id
+                """,
+                (user_id, clean, role_id, now),
             )
             await db.commit()
 
@@ -110,15 +126,16 @@ class UsersRepository:
         clean = (email or "").lower().strip()
         if not clean:
             return
+        user_id = str(uuid.uuid4())
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO users (email, role_id, created_at)
-                VALUES (?, ?, ?)
+                INSERT INTO users (id, email, role_id, created_at)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(email) DO UPDATE SET
                     role_id = CASE WHEN users.role_id = 'admin' THEN 'admin' ELSE excluded.role_id END
                 """,
-                (clean, role_id, _now()),
+                (user_id, clean, role_id, _now()),
             )
             await db.commit()
 

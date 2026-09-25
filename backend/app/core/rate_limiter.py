@@ -1,7 +1,15 @@
 import asyncio
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 from app.core.config import settings
 
+# ── HTTP endpoint rate limiter (slowapi) ─────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
 
+
+# ── Fabric API concurrency limiter ───────────────────────────────────
 class FabricRateLimiter:
     """
     Limits concurrent outgoing HTTP requests to Microsoft Fabric REST APIs

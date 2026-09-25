@@ -1,3 +1,3 @@
-from app.modules.websocket.router import router as websocket_router
+from app.modules.websocket.connection_manager import connection_manager
 
-__all__ = ["websocket_router"]
+__all__ = ["connection_manager"]

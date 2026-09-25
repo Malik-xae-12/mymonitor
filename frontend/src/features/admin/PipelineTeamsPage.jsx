@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import SlaConfigModal from '../../components/shared/SlaConfigModal';
 import WorkspaceSelector from '../../components/shared/WorkspaceSelector';
+import { listWorkspaces, getWorkspacePipelineAssignments } from './api';
 
 export default function PipelineTeamsPage({ onOpenTableConfig }) {
   const [workspaces, setWorkspaces] = useState([]);
@@ -27,9 +28,8 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
   useEffect(() => {
     async function loadWorkspaces() {
       try {
-        const res = await fetch('/api/workspaces');
-        if (res.ok) {
-          const list = await res.json();
+        const list = await listWorkspaces();
+        if (Array.isArray(list)) {
           setWorkspaces(list);
           if (list.length > 0 && !selectedWorkspaceId) {
             setSelectedWorkspaceId(list[0].id);
@@ -47,13 +47,8 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
     if (!wsId) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/workspaces/${wsId}/pipeline-assignments${forceSync ? '?force_sync=true' : ''}`);
-      if (res.ok) {
-        const data = await res.json();
-        setPipelines(Array.isArray(data) ? data : []);
-      } else {
-        setPipelines([]);
-      }
+      const data = await getWorkspacePipelineAssignments(wsId, forceSync);
+      setPipelines(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load pipeline assignments:', err);
       setPipelines([]);

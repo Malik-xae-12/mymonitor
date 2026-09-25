@@ -101,7 +101,7 @@ class AlertService:
         # 2. Get SLA config (email addresses configured by the user in SLA modal)
         sla_cfg = await sla_repository.get_sla_config(workspace_id, pipeline_id)
         sla_minutes = sla_cfg.get("slaMinutes", 30)
-        l1_email = sla_cfg.get("l1Email") or "uiaptracker@gmail.com"
+        l1_email = sla_cfg.get("l1Email") or settings.MAIL_FROM or settings.MAIL_USERNAME
         target_dt = failed_dt + datetime.timedelta(minutes=sla_minutes)
         sla_target_time = target_dt.isoformat()
 
@@ -295,7 +295,7 @@ If unresolved within {sla_minutes} minutes, it will automatically escalate to L2
 
                         # Fetch L2 email from config
                         sla_cfg = await sla_repository.get_sla_config(ws_id, p_id)
-                        l2_email = sla_cfg.get("l2Email") or "uiaptracker@gmail.com"
+                        l2_email = sla_cfg.get("l2Email") or settings.MAIL_FROM or settings.MAIL_USERNAME
 
                         # Dispatch L2 Escalation Email with full diagnostics
                         subject = f"[URGENT L2 ESCALATION - SLA BREACHED] {p_name} is +{overdue_min}m Overdue!"
@@ -493,7 +493,7 @@ Message: {err_msg}
 RAW LOG TRACE:
 {raw_error_str}
 ============================================================
-Notification dispatched automatically from uiaptracker@gmail.com
+Notification dispatched automatically from {settings.MAIL_FROM or settings.MAIL_USERNAME}
 """
         html_body = f"""
 <!DOCTYPE html>
@@ -543,7 +543,7 @@ Notification dispatched automatically from uiaptracker@gmail.com
     </div>''' if raw_error_str else ''}
 
     <div class="footer">
-      Dispatched automatically from uiaptracker@gmail.com • Microsoft Fabric Job Monitor
+      Dispatched automatically from {settings.MAIL_FROM or settings.MAIL_USERNAME} • Microsoft Fabric Job Monitor
     </div>
   </div>
 </body>
@@ -560,7 +560,7 @@ Notification dispatched automatically from uiaptracker@gmail.com
         })
 
     async def send_test_email(self, to_email: str, role: str, pipeline_name: str) -> bool:
-        """Sends a verification test email from uiaptracker@gmail.com."""
+        """Sends a verification test email from operations alert system."""
         subject = f"[TEST ALERT] Fabric Monitor - {role} Alerting Verification ({pipeline_name})"
         plain_body = f"""
 TEST NOTIFICATION DISPATCHED

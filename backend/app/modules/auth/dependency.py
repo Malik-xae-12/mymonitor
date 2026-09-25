@@ -21,8 +21,8 @@ logger = logging.getLogger("fabric_monitor.auth")
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-_TENANT = settings.AZURE_AD_TENANT_ID or "008502d6-3f79-46f0-ab37-9354e3fe80ff"
-_CLIENT_ID = settings.AZURE_AD_CLIENT_ID or "25ad11d7-5885-4f0e-8424-919bf02e04eb"
+_TENANT = settings.AZURE_AD_TENANT_ID or settings.AZURE_TENANT_ID
+_CLIENT_ID = settings.AZURE_AD_CLIENT_ID or settings.AZURE_CLIENT_ID
 _JWKS_URI = f"https://login.microsoftonline.com/{_TENANT}/discovery/v2.0/keys"
 _VALID_ISSUERS = {
     f"https://login.microsoftonline.com/{_TENANT}/v2.0",

@@ -531,7 +531,7 @@ class TableLogService:
                         tbl = str(candidate_val).strip()
                         break
 
-            known_schemas = {"dbo", "public", "sys", "guest", "information_schema", "fabricacctest", "config", "log"}
+            known_schemas = {"dbo", "public", "sys", "guest", "information_schema", "config", "log"}
             if tbl.lower() in known_schemas and sch.lower() not in known_schemas and sch:
                 tbl, sch = sch, tbl
             elif not sch and raw_row.get("SchemaName"):

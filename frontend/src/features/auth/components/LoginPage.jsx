@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldCheck, LogIn } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { env } from '../../../config/env';
 
 /**
  * Fabric-native sign-in screen. Purpose is stated plainly so the user
@@ -65,7 +66,7 @@ export default function LoginPage() {
 
           <div className="pt-3 border-t border-[#edebe9] text-[11px] text-[#797775] space-y-1">
             <p>Configured for Microsoft Entra ID Tenant:</p>
-            <p className="font-mono text-[10px] text-[#605e5c]">008502d6-3f79-46f0-ab37-9354e3fe80ff</p>
+            <p className="font-mono text-[10px] text-[#605e5c]">{env.azureTenantId}</p>
           </div>
         </div>
       </div>

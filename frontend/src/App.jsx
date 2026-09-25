@@ -76,12 +76,9 @@ export default function App() {
   useEffect(() => {
     if (scopedWorkspaces.length > 0) {
       if (!workspaceId) {
-        if (isAdmin) {
-          const allConn = scopedWorkspaces.find((w) => w.displayName === 'AllConnChk' || w.name === 'AllConnChk');
-          setWorkspaceId(allConn ? allConn.id : scopedWorkspaces[0].id);
-        } else {
-          setWorkspaceId(scopedWorkspaces[0].id);
-        }
+        const savedWsId = localStorage.getItem('fabric_selected_workspace_id');
+        const matchedSaved = savedWsId && scopedWorkspaces.find((w) => w.id === savedWsId);
+        setWorkspaceId(matchedSaved ? matchedSaved.id : scopedWorkspaces[0].id);
       } else if (!isAdmin) {
         // If an assigned user is on a workspace not assigned to them, steer them to their first assigned workspace
         const exists = scopedWorkspaces.some((w) => w.id === workspaceId);
@@ -91,6 +88,12 @@ export default function App() {
       }
     }
   }, [workspaceId, scopedWorkspaces, isAdmin]);
+
+  useEffect(() => {
+    if (workspaceId) {
+      localStorage.setItem('fabric_selected_workspace_id', workspaceId);
+    }
+  }, [workspaceId]);
 
   const hasInitialLandedRef = useRef(false);
 

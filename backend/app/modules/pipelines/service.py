@@ -8,6 +8,7 @@ from app.modules.pipelines.repository import pipeline_repository
 from app.modules.pipelines.poller import leased_poller
 from app.modules.sla.repository import sla_repository
 from app.shared.clients.fabric_client import fabric_client
+from app.shared.constants import DEFAULT_PIPELINE_NAME, DEFAULT_SLA1_MINUTES, DEFAULT_SLA2_MINUTES
 
 logger = logging.getLogger("fabric_monitor.pipelines")
 
@@ -148,7 +149,7 @@ class PipelineService:
 
         for p in pipelines:
             pid = p.get("id")
-            p_name = p.get("displayName") or p.get("name") or "Pipeline"
+            p_name = p.get("displayName") or p.get("name") or DEFAULT_PIPELINE_NAME
             sched_data = await fabric_client.get_pipeline_schedules(workspace_id, pid)
             all_s = _parse_schedules_payload(sched_data)
             active = [s for s in all_s if s.get("enabled")]
@@ -193,7 +194,7 @@ class PipelineService:
                     parents = await pipeline_repository.get_parent_pipelines(workspace_id)
                     if not parents:
                         parents = [
-                            {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
+                            {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or DEFAULT_PIPELINE_NAME}
                             for p in fabric_pipes
                         ]
                     # Asynchronously fetch runs to update hierarchy in the background without blocking the UI
@@ -220,7 +221,7 @@ class PipelineService:
                     pipelines = await pipeline_repository.get_parent_pipelines(workspace_id)
                     if not pipelines:
                         pipelines = [
-                            {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or "Pipeline"}
+                            {"pipelineId": p["id"], "pipelineName": p.get("displayName") or p.get("name") or DEFAULT_PIPELINE_NAME}
                             for p in fabric_pipes
                         ]
                     # Asynchronously fetch runs to update hierarchy in the background without blocking the UI
@@ -241,8 +242,8 @@ class PipelineService:
                 "l1Name": sla_info.get("l1Name") or "",
                 "l2Email": sla_info.get("l2Email") or "",
                 "l2Name": sla_info.get("l2Name") or "",
-                "sla1Minutes": sla_info.get("sla1Minutes", 30),
-                "sla2Minutes": sla_info.get("sla2Minutes", 60),
+                "sla1Minutes": sla_info.get("sla1Minutes", DEFAULT_SLA1_MINUTES),
+                "sla2Minutes": sla_info.get("sla2Minutes", DEFAULT_SLA2_MINUTES),
             })
         return results
 

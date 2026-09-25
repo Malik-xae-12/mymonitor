@@ -1,112 +1,175 @@
-# Frontend: Microsoft Fabric Real-Time Job Monitoring Dashboard
+# Microsoft Fabric Real-Time Monitoring Hub — Frontend
 
-The frontend is a modern, high-performance React 19 application built with Vite, Tailwind CSS v4, and Lucide React icons. It provides sub-second live streaming telemetry, date-based filtering covering Last Week to Next Week, Gemini AI error troubleshooting, dynamic Lakehouse/Warehouse table logging, multi-schedule inspection, and SLA configuration.
-
----
-
-## Architecture & Technology Stack
-
-- **React 19:** Modern functional components with hooks and strict lifecycle control.
-- **Vite:** Next-generation frontend build tooling with ultra-fast Hot Module Replacement (HMR) and optimized production chunking.
-- **Tailwind CSS v4:** Utility-first CSS styling using modern CSS variables and dark-mode optimization.
-- **Lucide React:** Consistent, lightweight, accessible SVG icon library.
-- **WebSockets (`useWorkspaceMonitoring`):** Resilient streaming telemetry hook with automatic reconnect, date-filter synchronization, and instant snapshot ingestion.
-- **ErrorBoundary:** Top-level error boundary wrapping the application to prevent any child component exception from breaking the dashboard.
+The frontend of the Microsoft Fabric Real-Time Monitoring Hub is a single-page application built with **React** and **Vite**. It provides real-time hierarchical visibility into Microsoft Fabric data pipelines, interactive execution run trees, custom Lakehouse/Warehouse Delta table telemetry, automated SLA incident management, AI error remediation, and administrative team assignments.
 
 ---
 
-## Component Hierarchy
+## Architecture Overview
+
+The frontend follows a **Feature-First Architecture**. Instead of grouping by technical type (e.g. putting all components or all hooks in global folders), business domains are organized into self-contained feature packages under `src/features/`:
 
 ```
-App.jsx (Root Coordinator & State Manager)
-│
-├── DashboardHeader.jsx (Sticky Top Navigation Bar)
-│   ├── WorkspaceSelector.jsx (Tenant-wide Searchable Dropdown)
-│   ├── Connection Badge (Pulsing Green 'Live Sync' / Amber 'Reconnecting...')
-│   ├── Active Viewers Counter (👥 X viewers)
-│   ├── Refresh Button (Manual Fabric Poll Sync)
-│   └── Table Log Config Button (Dynamic Lakehouse/Warehouse Mapping Launcher)
-│
-├── PipelineTreeTable.jsx (Main Hierarchy & Filter Container)
-│   │
-│   ├── DateFilterBar.jsx (Date Range & Execution Filter Controls)
-│   │   ├── Search by Name (Real-time pipeline & activity search)
-│   │   ├── Quick Presets (Last Week, Yesterday, Today, Tomorrow, Next Week, Latest/All)
-│   │   ├── Day-by-Day Navigator (15-day interactive strip: Sep 05 → Sep 19)
-│   │   ├── Calendar Date Picker (<input type="date">)
-│   │   └── Dynamic Metric Cards / Status Tabs:
-│   │       ├── Past/Today: All, Running, Succeeded, Failed, Cancelled, Not Run
-│   │       └── Future Forecast: Total, Scheduled to Run, Not Scheduled
-│   │
-│   └── PipelineRow.jsx (Collapsible Pipeline Accordion)
-│       ├── Status Badges (Running, Success, Failed, Cancelled, Scheduled, Not Run)
-│       ├── SLA Badges (Overdue days/hours/mins + 1-Click Green 'Resolve' Button)
-│       ├── Execution Timestamps & Dynamic Duration ('Upcoming' for scheduled runs)
-│       ├── Action Buttons:
-│       │   ├── [History] -> Opens RunHistoryModal
-│       │   ├── [Schedule] -> Opens PipelineScheduleModal
-│       │   ├── [SLA] -> Opens SlaConfigModal
-│       │   ├── [Table Logs] -> Opens TableLogDashboardModal
-│       │   └── [Error] -> Opens ErrorDetailModal (Failed activities only)
-│       │
-│       ├── ActivityList.jsx (Inner Pipeline Activity Telemetry)
-│       │   ├── Activity Type Icons (Copy, Notebook, ExecutePipeline, SQL, Lookup, etc.)
-│       │   ├── Status Badges & Timestamps
-│       │   └── [View Error] Button
-│       │
-│       └── Nested PipelineRow.jsx (Child Pipelines Triggered by ExecutePipeline)
-│
-└── Modals & Drawers
-    ├── DateFilterBar.jsx (Integrated in Tree Table)
-    ├── ErrorDetailModal.jsx (Deep Error Diagnostics + Google Gemini AI Fix Guide)
-    ├── RunHistoryModal.jsx (Historical Runs Archive with Activities, Errors & Table Logs)
-    ├── PipelineScheduleModal.jsx (Multi-Schedule Cards: Daily, Weekly, Times, Days, Next Run)
-    ├── SlaConfigModal.jsx (Target Minutes, L1/L2 Emails, SMTP Test Buttons)
-    ├── SchedulesDrawer.jsx (Workspace-wide upcoming schedule drawer)
-    ├── TableLogConfigModal.jsx (Dynamic Lakehouse/Warehouse Schema & Column Mapping)
-    └── TableLogDashboardModal.jsx (Batch Header -> Bronze -> Silver Table Logs & Lineage)
+src/features/<feature-name>/
+├── api/             # Typed API client functions for this feature
+├── components/      # React UI views, modals, cards, and tables
+├── hooks/           # Custom React hooks encapsulating business logic & state
+├── context/         # Feature-specific React context (if applicable)
+└── index.js         # Public feature barrel export
+```
+
+Cross-cutting infrastructure lives in dedicated directories:
+- `src/config/`: MSAL authentication, application settings, environment variables.
+- `src/services/api/`: Base API client with automatic Entra ID bearer token attachment.
+- `src/components/ui/`: Atomic, reusable design system components (Button, Badge, Modal, Input, Spinner).
+- `src/components/shared/`: Shared composite UI components used across multiple features.
+- `src/context/`: Global theme and visual layout state.
+
+---
+
+## Directory Structure
+
+```
+frontend/
+├── src/
+│   ├── main.jsx                 # Application entry point (MSAL & Theme providers)
+│   ├── App.jsx                  # Main view container, tab switcher, workspace selector
+│   ├── index.css                # Base stylesheet and theme variables
+│   ├── config/                  # MSAL configuration and environment variables
+│   │   ├── authConfig.js        # Azure Entra ID client ID, authority, redirect URI
+│   │   ├── env.js               # Environment variable helpers (Vite import.meta.env)
+│   │   └── msalInstance.js      # PublicClientApplication instance singleton
+│   ├── services/                # Global services & HTTP fetch layer
+│   │   └── api/
+│   │       ├── apiClient.js     # Authenticated fetch wrapper with MSAL token attachment
+│   │       └── endpoints.js     # Backend API endpoint URL definitions
+│   ├── context/                 # Global UI context
+│   │   └── ThemeContext.jsx     # Dark / light theme provider
+│   ├── constants/               # System constants
+│   │   ├── roles.js             # RBAC role constants ('admin', 'l1', 'l2')
+│   │   ├── routes.js            # Tab identifiers and navigation route keys
+│   │   └── apiConstants.js      # HTTP headers and status codes
+│   ├── components/
+│   │   ├── ui/                  # Reusable atomic UI components
+│   │   │   ├── Badge/           # Status and SLA badges
+│   │   │   ├── Button/          # Multi-variant action buttons with loading states
+│   │   │   ├── Input/           # Form inputs and search controls
+│   │   │   ├── Modal/           # Accessible dialog modals with backdrop blur
+│   │   │   └── Spinner/         # Loading spinner animations
+│   │   └── shared/              # Shared composite UI components
+│   │       ├── Header.jsx       # Top navigation bar with workspace picker & user menu
+│   │       ├── ErrorDetailModal.jsx # Error inspection modal with AI diagnostic advice
+│   │       ├── SlaBadge.jsx     # Visual SLA status indicator
+│   │       └── SlaConfigModal.jsx   # Modal for configuring pipeline SLA thresholds
+│   └── features/                # Feature-driven domain packages
+│       ├── auth/                # Entra ID SSO login and authentication gate
+│       ├── monitoring/          # Pipeline tree tables, metrics, and WebSocket streaming
+│       ├── table-logs/          # Lakehouse/Warehouse delta logs and batch dashboards
+│       └── admin/               # Support assignment console and user role administration
+├── package.json                 # Dependencies and scripts
+└── vite.config.js               # Vite build and dev server configuration
 ```
 
 ---
 
-## Key Feature Highlights
+## Infrastructure & Shared Folders
 
-### 1. Date-Based Filter Bar (`DateFilterBar.jsx`)
-- Replaces static top banners and duplicate metrics with an interactive, date-driven telemetry hub.
-- Highlights days with past recorded executions (emerald dots) and future schedule windows (purple dots).
-- Dynamically shifts status cards between past execution counts (*Succeeded, Failed, Cancelled, Not Run*) and future forecast counts (*Scheduled, Not Scheduled*).
+### 1. `src/config/` — MSAL & Environment
+- [`authConfig.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/config/authConfig.js): Configures Microsoft Authentication Library (MSAL) for React (`@azure/msal-react`). Defines the Azure Entra ID Client ID, Tenant Authority (`https://login.microsoftonline.com/{TENANT_ID}`), redirect URI, and default login scopes (`User.Read`).
+- [`msalInstance.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/config/msalInstance.js): Initializes and exports the singleton `PublicClientApplication` instance.
+- [`env.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/config/env.js): Validates and provides typed access to environment variables (`VITE_API_URL`, `VITE_WS_URL`).
 
-### 2. Google Gemini AI Diagnostics (`ErrorDetailModal.jsx`)
-- One-click **"Diagnose with AI"** button on any failed activity or pipeline run.
-- Generates categorized root-cause explanations and numbered step-by-step remediation steps.
-- Cached locally in SQLite for instant repeat loads.
+### 2. `src/services/api/` — Authenticated HTTP Client
+- [`apiClient.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/services/api/apiClient.js):
+  - Central `apiFetch(path, options)` wrapper used for all backend network requests.
+  - Automatically acquires fresh Microsoft Entra ID tokens silently (`msalInstance.acquireTokenSilent`).
+  - Injects `Authorization: Bearer <token>` headers into every outbound request.
+  - Provides interactive login fallback if the active session expires.
+  - Handles JSON serialization, parsing, and structured HTTP error propagation.
+- [`endpoints.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/services/api/endpoints.js): URL constants for backend endpoints.
 
-### 3. Dynamic Table Logging (`TableLogConfigModal.jsx` & `TableLogDashboardModal.jsx`)
-- Configure which Lakehouse or Warehouse to monitor with zero hardcoding.
-- Map custom table and column names for Batch Header, Bronze, and Silver logs.
-- Inspect real-time batch metrics, row counts, and data load vs source delete operations.
+### 3. `src/components/ui/` — Atomic Design System
+- **`Badge/`**: Color-coded badges for pipeline statuses (`Completed`, `Failed`, `InProgress`, `Cancelled`), SLA states, and role tags.
+- **`Button/`**: Reusable button component supporting variants (`primary`, `secondary`, `danger`, `ghost`), sizes, and loading spinner states.
+- **`Input/`**: Styled input controls for text fields, search bars with icons, and form validation errors.
+- **`Modal/`**: Accessible overlay dialog with backdrop blur, smooth entry animations, and keyboard Escape dismissal.
+- **`Spinner/`**: Accessible SVG loading spinners.
 
-### 4. Multi-Schedule Support (`PipelineScheduleModal.jsx`)
-- Renders dedicated schedule cards for pipelines with multiple schedules (e.g. Daily at 08:00 + Weekly on Sundays).
-- Displays trigger type, execution times, active days, timezone, and start/end dates.
+### 4. `src/components/shared/` — Shared Composite Components
+- [`Header.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/Header.jsx): Top navigation header featuring the workspace dropdown selector, live WebSocket connection status indicator, manual refresh button, theme toggle, and signed-in user avatar/profile menu.
+- [`ErrorDetailModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/ErrorDetailModal.jsx): Inspects failed pipeline activities, presents sanitized stack traces, and queries Google Gemini Flash to display root-cause explanations and step-by-step remediation advice.
+- [`SlaBadge.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/SlaBadge.jsx): Displays SLA status with warning badges, breach indicators, and remaining resolution countdowns.
+- [`SlaConfigModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/components/shared/SlaConfigModal.jsx): Modal allowing users to configure pipeline-level SLA1 warning minutes, SLA2 breach minutes, and assigned L1/L2 contact emails.
 
 ---
 
-## Development & Build Commands
+## Feature Modules (`src/features/`)
 
-### Install Dependencies
-```bash
-npm install
-```
+### 1. `auth` — Microsoft Single Sign-On & Access Gate
+Protects application routes and manages the user's authentication and RBAC identity.
 
-### Start Development Server
-```bash
-npm run dev
-```
-The Vite development server runs on `http://localhost:3000` and automatically proxies `/api` and `/ws` requests to `http://127.0.0.1:8000`.
+- [`components/AuthGate.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/auth/components/AuthGate.jsx): Top-level authentication wrapper. If auth is enabled and the user is unauthenticated, intercepts rendering and displays the `LoginPage`.
+- [`components/LoginPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/auth/components/LoginPage.jsx): Corporate branded sign-in page triggering Microsoft Entra ID interactive popup or redirect login.
+- [`context/AuthContext.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/auth/context/AuthContext.jsx): Provides global user session state, resolved security role (`admin`, `l1`, `l2`), and assigned workspace list.
+- [`hooks/useAuth.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/auth/hooks/useAuth.js): Hook exposing `user`, `role`, `isAdmin`, `isL1`, `isL2`, `login()`, and `logout()`.
+- [`api/authApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/auth/api/authApi.js): API calls for `/api/auth/me`, `/api/auth/entra-id/exchange`, `/api/auth/jwt/refresh`, and logout.
 
-### Production Build
-```bash
-npm run build
-```
-Compiles the application into `frontend/dist/` in < 1 second. The FastAPI backend automatically serves these static assets on `http://localhost:8000`.
+---
+
+### 2. `monitoring` — Real-Time Pipeline Hierarchy & Execution Trees
+The primary operational monitoring view of the platform.
+
+- [`components/PipelineTreeTable.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/components/PipelineTreeTable.jsx):
+  - Renders the hierarchical table displaying parent pipelines, invoked child pipeline runs, and individual activity execution steps.
+  - Supports collapsible rows, status badges, execution duration formatting, and error dialog triggers.
+- [`components/PipelineRow.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/components/PipelineRow.jsx): Renders an individual pipeline run row with expand/collapse chevron, status indicators, schedule badges, and actions.
+- [`components/FabricCommandBar.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/components/FabricCommandBar.jsx): Command toolbar providing live text search, status filters (All, Failed, In Progress, Succeeded), date range pickers, and manual sync triggers.
+- [`components/FabricMetricCards.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/components/FabricMetricCards.jsx): Top-level KPI overview cards displaying Total Runs, Active/Running count, Succeeded count, and Failed count for the selected time window.
+- [`hooks/useWorkspaceMonitoring.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/hooks/useWorkspaceMonitoring.js):
+  - Manages real-time WebSocket connection to `/ws/{workspace_id}`.
+  - Maintains the active leased polling session on the backend.
+  - Handles fast snapshot retrieval, live incremental updates, search filtering, and date window state.
+- [`api/monitoringApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/monitoring/api/monitoringApi.js): API calls for `/pipelines/snapshot`, `/pipelines/{id}/history`, `/pipelines/schedules`, and parent pipeline assignments.
+
+---
+
+### 3. `table-logs` — Lakehouse & Warehouse Delta Table Telemetry
+Visualizes low-level batch runs, custom delta audit tables, and stage load metrics.
+
+- [`components/TableLogsPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/components/TableLogsPage.jsx): Main dashboard showing batch execution history, stage KPIs (Total Tables, Successfully Loaded, Failed, Average Duration, Rows Processed), and Bronze vs. Silver layer load tables.
+- [`components/TableLogConfigPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/components/TableLogConfigPage.jsx) & [`TableLogConfigModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/components/TableLogConfigModal.jsx):
+  - Configuration interface allowing users to select target Lakehouses/Warehouses.
+  - Interactively maps database columns (Batch ID, Table Name, Schema, Status, Rows Processed, Timestamps) to platform monitoring fields.
+- [`components/TableLogDashboardModal.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/components/TableLogDashboardModal.jsx): Modal providing granular inspection of an individual batch run with step execution charts.
+- [`hooks/useTableLogs.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/hooks/useTableLogs.js): Custom hook managing artifact discovery, schema fetching, column loading, table previews, and batch log telemetry queries.
+- [`api/tableLogsApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/table-logs/api/tableLogsApi.js): API calls for discovering data artifacts, fetching schemas, reading column mappings, and executing log queries.
+
+---
+
+### 4. `admin` — Team Assignments & System Administration
+Administrative console for managing support operations (Admin-only).
+
+- [`components/AdminConsole.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/AdminConsole.jsx): Tabbed container housing User Management, Workspace Support Assignments, and Pipeline Support Teams.
+- [`components/UsersPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/UsersPage.jsx):
+  - Lists registered platform users with their current support roles.
+  - Provides modal for adding directory users with autocomplete search against Microsoft Graph API.
+  - Enables changing user roles (`admin`, `l1`, `l2`) and revoking access.
+- [`components/WorkspaceAssignmentPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/WorkspaceAssignmentPage.jsx): Interface for assigning primary L1 and secondary L2 support teams to entire Fabric workspaces.
+- [`components/PipelineTeamsPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/PipelineTeamsPage.jsx): Fine-grained assignment interface allowing administrators to override support teams and SLA thresholds on individual parent pipelines.
+- [`hooks/useAdminUsers.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/hooks/useAdminUsers.js): Manages user list state, role changes, and Microsoft Graph directory search queries.
+- [`hooks/useAdminAssignments.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/hooks/useAdminAssignments.js): Manages workspace and pipeline support assignment CRUD operations.
+- [`api/adminApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/api/adminApi.js): API calls for `/api/admin/users`, `/api/admin/roles`, `/api/admin/assignments`, and `/api/directory/users/search`.
+
+---
+
+## Application Root & Navigation
+
+- **[`src/main.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/main.jsx)**: Mounts React onto `#root`, binds `MsalProvider`, and initializes `ThemeProvider`.
+- **[`src/App.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/App.jsx)**:
+  - Top-level application shell wrapped by `AuthGate`.
+  - Coordinates active workspace state across features.
+  - Manages primary tab navigation:
+    1. **Monitoring**: Live hierarchical pipeline and activity run trees.
+    2. **Table Logs**: Lakehouse/Warehouse Delta table telemetry and KPIs.
+    3. **SLA Incidents**: Active, escalated, and resolved failure incidents.
+    4. **Admin Console**: User roles and team assignments (accessible to Administrators).
+  - Listens for global refresh signals and coordinates real-time telemetry updates.

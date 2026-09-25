@@ -26,8 +26,8 @@ from app.modules.users.router import router as users_router
 from app.modules.users.service import users_service
 from app.modules.websocket.router import router as websocket_router
 from app.modules.workspaces.router import router as workspaces_router
-from app.modules.sla.alert_service import alert_service
-from app.modules.pipelines.poller import leased_poller
+from app.modules.sla.service import alert_service
+from app.modules.pipelines.service import leased_poller
 from app.shared.constants import AUTH_URL_PATH
 
 logger = logging.getLogger("fabric_monitor")

@@ -2,102 +2,134 @@ import datetime
 import json
 import logging
 from typing import Any, Dict, List, Optional, Set
-import aiosqlite
 
-from app.db.session import get_sqlite_path
+from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+
+from app.db.session import async_session_maker
+from app.modules.pipelines.models.activity_run import ActivityRun
+from app.modules.pipelines.models.pipeline import Pipeline
+from app.modules.pipelines.models.pipeline_run import PipelineRun
+from app.modules.pipelines.models.pipeline_schedule import PipelineSchedule
+from app.modules.sla.models.sla_config import SLAConfig
+from app.modules.sla.models.sla_incident import SLAIncident
+from app.shared.constants import DEFAULT_PIPELINE_NAME
 
 logger = logging.getLogger("fabric_monitor.pipelines.repo")
 
 
 class PipelineRepository:
-    def __init__(self, db_path: Optional[str] = None):
-        self._db_path = db_path
-
-    @property
-    def db_path(self) -> str:
-        return self._db_path or get_sqlite_path()
+    def __init__(self):
+        """Initializes the pipeline repository backed by SQLAlchemy Async ORM."""
+        pass
 
     async def get_known_cached_run_ids(self, workspace_id: str) -> Set[str]:
         """Returns run IDs that are completed/failed and already have activity runs stored with all child pipelines resolved."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT DISTINCT r.id 
-                FROM pipeline_runs r
-                INNER JOIN activity_runs a ON r.id = a.pipeline_run_id
-                WHERE r.workspace_id = ? 
-                  AND r.status IN ('Completed', 'Failed', 'Cancelled')
-                  AND r.id NOT IN (
-                      SELECT DISTINCT pipeline_run_id 
-                      FROM activity_runs 
-                      WHERE (LOWER(activity_type) LIKE '%executepipeline%' OR LOWER(activity_type) LIKE '%invokepipeline%')
-                        AND child_pipeline_data IS NULL
-                  )
-            """, (workspace_id,))
-            rows = await cursor.fetchall()
-            return {row["id"] for row in rows}
+        async with async_session_maker() as session:
+            # Subquery for runs that have unresolved child pipeline data
+            unresolved_subq = (
+                select(ActivityRun.pipeline_run_id)
+                .where(
+                    or_(
+                        func.lower(ActivityRun.activity_type).like("%executepipeline%"),
+                        func.lower(ActivityRun.activity_type).like("%invokepipeline%"),
+                    ),
+                    ActivityRun.child_pipeline_data.is_(None),
+                )
+                .distinct()
+            )
 
-    async def save_pipelines(self, workspace_id: str, pipelines: List[Dict[str, Any]], updated_at: str):
+            stmt = (
+                select(PipelineRun.id)
+                .join(ActivityRun, PipelineRun.id == ActivityRun.pipeline_run_id)
+                .where(
+                    PipelineRun.workspace_id == workspace_id,
+                    PipelineRun.status.in_(["Completed", "Failed", "Cancelled"]),
+                    PipelineRun.id.not_in(unresolved_subq),
+                )
+                .distinct()
+            )
+
+            result = await session.execute(stmt)
+            return {row[0] for row in result.all() if row[0]}
+
+    async def save_pipelines(self, workspace_id: str, pipelines: List[Dict[str, Any]], updated_at: Optional[str] = None) -> None:
         """Saves pipelines from Fabric. Defaults to parent level (is_master=1) until dynamic child linking."""
-        async with aiosqlite.connect(self.db_path) as db:
+        if not pipelines:
+            return
+        if not updated_at:
+            updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        async with async_session_maker() as session:
             for p in pipelines:
                 pid = p.get("id")
-                name = p.get("displayName") or p.get("name") or "Pipeline"
+                name = p.get("displayName") or p.get("name") or DEFAULT_PIPELINE_NAME
                 parts = name.split("_")
                 prefix = f"{parts[0]}_{parts[1]}".lower() if len(parts) >= 2 else ""
 
-                await db.execute("""
-                    INSERT INTO pipelines (id, workspace_id, displayName, is_master, prefix, updated_at)
-                    VALUES (?, ?, ?, 1, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        displayName=excluded.displayName,
-                        prefix=excluded.prefix,
-                        updated_at=excluded.updated_at
-                """, (pid, workspace_id, name, prefix, updated_at))
-            await db.commit()
+                is_m = int(p.get("is_master", 1))
+                stmt = sqlite_upsert(Pipeline).values(
+                    id=pid,
+                    workspace_id=workspace_id,
+                    displayName=name,
+                    is_master=is_m,
+                    prefix=prefix,
+                    updated_at=updated_at,
+                ).on_conflict_do_update(
+                    index_elements=[Pipeline.id],
+                    set_={
+                        "displayName": name,
+                        "prefix": prefix,
+                        "is_master": is_m,
+                        "updated_at": updated_at,
+                    },
+                )
+                await session.execute(stmt)
+            await session.commit()
 
-    async def update_child_pipeline_flags(self, workspace_id: str, invoked_child_ids: Set[str], invoked_child_names: Set[str]):
+    async def update_child_pipeline_flags(
+        self, workspace_id: str, invoked_child_ids: Set[str], invoked_child_names: Set[str]
+    ) -> None:
         """
         Dynamic pipeline role resolution:
         Any pipeline that is invoked by an ExecutePipeline activity or has runs marked
         as is_child / parent_run_id is flagged as a child pipeline (is_master = 0).
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
+        child_ids = {str(i).strip().lower() for i in invoked_child_ids if i}
+        child_names = {str(n).strip().lower() for n in invoked_child_names if n}
 
-            child_ids = {str(i).strip().lower() for i in invoked_child_ids if i}
-            child_names = {str(n).strip().lower() for n in invoked_child_names if n}
+        def extract_child_meta(data: Any) -> None:
+            """Recursively extracts child pipeline identifiers and names from nested activity JSON."""
+            if not data or not isinstance(data, dict):
+                return
+            pid = data.get("pipelineId")
+            pname = data.get("pipelineName")
+            if pid:
+                child_ids.add(str(pid).strip().lower())
+            if pname:
+                child_names.add(str(pname).strip().lower())
+            for act in data.get("activities", []):
+                if isinstance(act, dict) and "childPipeline" in act and act["childPipeline"]:
+                    extract_child_meta(act["childPipeline"])
 
-            def extract_child_meta(data):
-                if not data or not isinstance(data, dict):
-                    return
-                pid = data.get("pipelineId")
-                pname = data.get("pipelineName")
-                if pid:
-                    child_ids.add(str(pid).strip().lower())
-                if pname:
-                    child_names.add(str(pname).strip().lower())
-                for act in data.get("activities", []):
-                    if isinstance(act, dict) and "childPipeline" in act and act["childPipeline"]:
-                        extract_child_meta(act["childPipeline"])
-
+        async with async_session_maker() as session:
             # 1. Discover child pipelines from activity_runs JSON
-            cursor = await db.execute("""
-                SELECT child_pipeline_data, output
-                FROM activity_runs
-                WHERE child_pipeline_data IS NOT NULL OR output LIKE '%pipeline%'
-            """)
-            act_rows = await cursor.fetchall()
-            for r in act_rows:
-                if r["child_pipeline_data"]:
+            stmt1 = select(ActivityRun.child_pipeline_data, ActivityRun.output).where(
+                or_(
+                    ActivityRun.child_pipeline_data.isnot(None),
+                    ActivityRun.output.like("%pipeline%"),
+                )
+            )
+            act_rows = (await session.execute(stmt1)).all()
+            for r_data, r_out in act_rows:
+                if r_data:
                     try:
-                        d = json.loads(r["child_pipeline_data"])
+                        d = json.loads(r_data)
                         extract_child_meta(d)
                     except Exception:
                         pass
-                if r["output"]:
+                if r_out:
                     try:
-                        o = json.loads(r["output"])
+                        o = json.loads(r_out)
                         if isinstance(o, dict):
                             p_ref = o.get("pipelineName") or o.get("pipelineId")
                             if p_ref:
@@ -108,57 +140,62 @@ class PipelineRepository:
                         pass
 
             # 2. Discover child runs from child_pipeline_run_id
-            cursor = await db.execute("""
-                SELECT DISTINCT child_pipeline_run_id FROM activity_runs
-                WHERE child_pipeline_run_id IS NOT NULL
-            """)
-            run_rows = await cursor.fetchall()
-            child_run_ids = {r["child_pipeline_run_id"] for r in run_rows if r["child_pipeline_run_id"]}
+            stmt2 = select(ActivityRun.child_pipeline_run_id).where(
+                ActivityRun.child_pipeline_run_id.isnot(None)
+            ).distinct()
+            child_run_ids = {row[0] for row in (await session.execute(stmt2)).all() if row[0]}
+
             if child_run_ids:
-                placeholders = ",".join(["?"] * len(child_run_ids))
-                cursor = await db.execute(f"""
-                    SELECT DISTINCT pipeline_id, pipeline_name FROM pipeline_runs
-                    WHERE id IN ({placeholders}) AND workspace_id = ?
-                """, (*child_run_ids, workspace_id))
-                found_pipes = await cursor.fetchall()
-                for fp in found_pipes:
-                    if fp["pipeline_id"]: child_ids.add(str(fp["pipeline_id"]).strip().lower())
-                    if fp["pipeline_name"]: child_names.add(str(fp["pipeline_name"]).strip().lower())
+                stmt_pipes = select(PipelineRun.pipeline_id, PipelineRun.pipeline_name).where(
+                    PipelineRun.id.in_(child_run_ids),
+                    PipelineRun.workspace_id == workspace_id,
+                )
+                found_pipes = (await session.execute(stmt_pipes)).all()
+                for f_pid, f_pname in found_pipes:
+                    if f_pid:
+                        child_ids.add(str(f_pid).strip().lower())
+                    if f_pname:
+                        child_names.add(str(f_pname).strip().lower())
 
             # 3. Check pipeline_runs where is_child = 1 or parent_run_id IS NOT NULL
-            cursor = await db.execute("""
-                SELECT DISTINCT pipeline_id, pipeline_name FROM pipeline_runs
-                WHERE workspace_id = ? AND (is_child = 1 OR parent_run_id IS NOT NULL)
-            """, (workspace_id,))
-            invoked_rows = await cursor.fetchall()
-            for ir in invoked_rows:
-                if ir["pipeline_id"]: child_ids.add(str(ir["pipeline_id"]).strip().lower())
-                if ir["pipeline_name"]: child_names.add(str(ir["pipeline_name"]).strip().lower())
+            stmt3 = select(PipelineRun.pipeline_id, PipelineRun.pipeline_name).where(
+                PipelineRun.workspace_id == workspace_id,
+                or_(PipelineRun.is_child == 1, PipelineRun.parent_run_id.isnot(None)),
+            ).distinct()
+            invoked_rows = (await session.execute(stmt3)).all()
+            for i_pid, i_pname in invoked_rows:
+                if i_pid:
+                    child_ids.add(str(i_pid).strip().lower())
+                if i_pname:
+                    child_names.add(str(i_pname).strip().lower())
 
             # 4. Update all pipelines for this workspace
-            cursor = await db.execute("SELECT id, displayName FROM pipelines WHERE workspace_id = ?", (workspace_id,))
-            all_pipes = await cursor.fetchall()
+            stmt_all = select(Pipeline).where(Pipeline.workspace_id == workspace_id)
+            all_pipes = (await session.execute(stmt_all)).scalars().all()
 
             for p in all_pipes:
-                pid = str(p["id"]).strip().lower()
-                pname = str(p["displayName"]).strip().lower()
-                is_child = pid in child_ids or pname in child_names
-                is_master = 0 if is_child else 1
+                pid_clean = str(p.id).strip().lower()
+                pname_clean = str(p.displayName or "").strip().lower()
+                is_child = pid_clean in child_ids or pname_clean in child_names
+                p.is_master = 0 if is_child else 1
 
-                await db.execute("""
-                    UPDATE pipelines SET is_master = ? WHERE id = ?
-                """, (is_master, p["id"]))
+            await session.commit()
 
-            await db.commit()
-
-    async def save_pipeline_runs(self, workspace_id: str, runs: List[Dict[str, Any]], updated_at: str):
-        async with aiosqlite.connect(self.db_path) as db:
+    async def save_pipeline_runs(self, workspace_id: str, runs: List[Dict[str, Any]], updated_at: Optional[str] = None) -> None:
+        """Persists pipeline run executions into local SQLite cache using SQLAlchemy ORM upsert."""
+        if not runs:
+            return
+        if not updated_at:
+            updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        async with async_session_maker() as session:
             for r in runs:
                 run_id = r.get("id")
                 pid = r.get("pipelineId") or r.get("itemId")
-                pname = r.get("pipelineName") or r.get("itemDisplayName") or "Pipeline"
+                pname = r.get("pipelineName") or r.get("itemDisplayName") or DEFAULT_PIPELINE_NAME
                 status = r.get("status") or "Unknown"
-                st = r.get("startTimeUtc") or r.get("startTime") or (updated_at if str(status).lower() in ("inprogress", "running", "notstarted") else None)
+                st = r.get("startTimeUtc") or r.get("startTime") or (
+                    updated_at if str(status).lower() in ("inprogress", "running", "notstarted") else None
+                )
                 et = r.get("endTimeUtc") or r.get("endTime")
                 dur = r.get("durationInMs")
                 invoke = r.get("invokeType", "Manual")
@@ -178,34 +215,45 @@ class PipelineRepository:
                     except Exception:
                         pass
 
-                await db.execute("""
-                    INSERT INTO pipeline_runs (
-                        id, pipeline_id, workspace_id, pipeline_name, status,
-                        start_time, end_time, duration_in_ms, invoke_type,
-                        is_child, parent_run_id, parent_activity_name, failure_reason, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        status=excluded.status,
-                        start_time=excluded.start_time,
-                        end_time=excluded.end_time,
-                        duration_in_ms=excluded.duration_in_ms,
-                        is_child=excluded.is_child,
-                        parent_run_id=excluded.parent_run_id,
-                        parent_activity_name=excluded.parent_activity_name,
-                        failure_reason=excluded.failure_reason,
-                        updated_at=excluded.updated_at
-                """, (
-                    run_id, pid, workspace_id, pname, status,
-                    st, et, dur, invoke,
-                    is_child, parent_run_id, parent_act, fail_str, updated_at
-                ))
-            await db.commit()
+                stmt = sqlite_upsert(PipelineRun).values(
+                    id=run_id,
+                    pipeline_id=pid,
+                    workspace_id=workspace_id,
+                    pipeline_name=pname,
+                    status=status,
+                    start_time=st,
+                    end_time=et,
+                    duration_in_ms=dur,
+                    invoke_type=invoke,
+                    is_child=is_child,
+                    parent_run_id=parent_run_id,
+                    parent_activity_name=parent_act,
+                    failure_reason=fail_str,
+                    updated_at=updated_at,
+                ).on_conflict_do_update(
+                    index_elements=[PipelineRun.id],
+                    set_={
+                        "status": status,
+                        "start_time": st,
+                        "end_time": et,
+                        "duration_in_ms": dur,
+                        "is_child": is_child,
+                        "parent_run_id": parent_run_id,
+                        "parent_activity_name": parent_act,
+                        "failure_reason": fail_str,
+                        "updated_at": updated_at,
+                    },
+                )
+                await session.execute(stmt)
+            await session.commit()
 
-    async def save_activity_runs(self, run_id: str, activities: List[Dict[str, Any]], updated_at: str):
+    async def save_activity_runs(self, run_id: str, activities: List[Dict[str, Any]], updated_at: Optional[str] = None) -> None:
+        """Persists granular activity run records and child pipeline linkage for a pipeline run."""
         if not activities:
             return
-        async with aiosqlite.connect(self.db_path) as db:
+        if not updated_at:
+            updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        async with async_session_maker() as session:
             for a in activities:
                 act_id = a.get("activityRunId") or a.get("id") or f"{run_id}-{a.get('activityName')}"
                 name = a.get("activityName", "Unknown Activity")
@@ -226,113 +274,112 @@ class PipelineRepository:
                 child_pipe = a.get("childPipeline")
                 child_pipe_str = json.dumps(child_pipe) if child_pipe else None
 
-                await db.execute("""
-                    INSERT INTO activity_runs (
-                        activity_run_id, pipeline_run_id, activity_name, activity_type,
-                        status, start_time, end_time, duration_in_ms, error, output,
-                        child_pipeline_run_id, child_pipeline_data, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(activity_run_id) DO UPDATE SET
-                        status=excluded.status,
-                        start_time=excluded.start_time,
-                        end_time=excluded.end_time,
-                        duration_in_ms=excluded.duration_in_ms,
-                        error=excluded.error,
-                        output=excluded.output,
-                        child_pipeline_run_id=excluded.child_pipeline_run_id,
-                        child_pipeline_data=excluded.child_pipeline_data,
-                        updated_at=excluded.updated_at
-                """, (
-                    act_id, run_id, name, atype,
-                    status, st, et, dur, err_str, out_str,
-                    str(child_run_id) if child_run_id else None,
-                    child_pipe_str, updated_at
-                ))
-            await db.commit()
+                p_run_id = a.get("pipelineRunId") or run_id
+                stmt = sqlite_upsert(ActivityRun).values(
+                    activity_run_id=act_id,
+                    pipeline_run_id=p_run_id,
+                    activity_name=name,
+                    activity_type=atype,
+                    status=status,
+                    start_time=st,
+                    end_time=et,
+                    duration_in_ms=dur,
+                    error=err_str,
+                    output=out_str,
+                    child_pipeline_run_id=str(child_run_id) if child_run_id else None,
+                    child_pipeline_data=child_pipe_str,
+                    updated_at=updated_at,
+                ).on_conflict_do_update(
+                    index_elements=[ActivityRun.activity_run_id],
+                    set_={
+                        "pipeline_run_id": p_run_id,
+                        "status": status,
+                        "start_time": st,
+                        "end_time": et,
+                        "duration_in_ms": dur,
+                        "error": err_str,
+                        "output": out_str,
+                        "child_pipeline_run_id": str(child_run_id) if child_run_id else None,
+                        "child_pipeline_data": child_pipe_str,
+                        "updated_at": updated_at,
+                    },
+                )
+                await session.execute(stmt)
+            await session.commit()
 
     async def get_activities_for_run(self, run_id: str) -> List[Dict[str, Any]]:
         """Fetches stored activities for a given run from SQLite with parsed childPipeline."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT activity_run_id, pipeline_run_id, activity_name, activity_type,
-                       status, start_time, end_time, duration_in_ms, error, output,
-                       child_pipeline_run_id, child_pipeline_data
-                FROM activity_runs
-                WHERE pipeline_run_id = ?
-                ORDER BY start_time ASC
-            """, (run_id,))
-            rows = await cursor.fetchall()
+        async with async_session_maker() as session:
+            stmt = select(ActivityRun).where(ActivityRun.pipeline_run_id == run_id).order_by(ActivityRun.start_time.asc())
+            rows = (await session.execute(stmt)).scalars().all()
             results = []
             for row in rows:
                 err_val = None
-                if row["error"]:
+                if row.error:
                     try:
-                        err_val = json.loads(row["error"])
+                        err_val = json.loads(row.error)
                     except Exception:
                         err_val = None
                 out_val = None
-                if row["output"]:
+                if row.output:
                     try:
-                        out_val = json.loads(row["output"])
+                        out_val = json.loads(row.output)
                     except Exception:
                         out_val = None
 
                 child_pipe = None
-                if row["child_pipeline_data"]:
+                if row.child_pipeline_data:
                     try:
-                        child_pipe = json.loads(row["child_pipeline_data"])
+                        child_pipe = json.loads(row.child_pipeline_data)
                     except Exception:
                         child_pipe = None
 
                 results.append({
-                    "activityRunId": row["activity_run_id"],
-                    "pipelineRunId": row["pipeline_run_id"],
-                    "activityName": row["activity_name"],
-                    "activityType": row["activity_type"],
-                    "status": row["status"],
-                    "activityRunStart": row["start_time"],
-                    "activityRunEnd": row["end_time"],
-                    "durationInMs": row["duration_in_ms"],
+                    "activityRunId": row.activity_run_id,
+                    "pipelineRunId": row.pipeline_run_id,
+                    "activityName": row.activity_name,
+                    "activityType": row.activity_type,
+                    "status": row.status,
+                    "activityRunStart": row.start_time,
+                    "activityRunEnd": row.end_time,
+                    "durationInMs": row.duration_in_ms,
                     "error": err_val,
                     "output": out_val,
-                    "childPipelineRunId": row["child_pipeline_run_id"],
-                    "childPipeline": child_pipe
+                    "childPipelineRunId": row.child_pipeline_run_id,
+                    "childPipeline": child_pipe,
                 })
             return results
 
     async def get_pipeline_history(self, workspace_id: str, pipeline_id: str) -> List[Dict[str, Any]]:
         """Returns all historical runs for a specific pipeline with inner activities."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT id, pipeline_id, workspace_id, pipeline_name, status,
-                       start_time, end_time, duration_in_ms, invoke_type,
-                       is_child, parent_run_id, parent_activity_name, failure_reason
-                FROM pipeline_runs
-                WHERE workspace_id = ? AND pipeline_id = ?
-                ORDER BY start_time DESC
-            """, (workspace_id, pipeline_id))
-            runs = await cursor.fetchall()
+        async with async_session_maker() as session:
+            stmt = (
+                select(PipelineRun)
+                .where(
+                    PipelineRun.workspace_id == workspace_id,
+                    PipelineRun.pipeline_id == pipeline_id,
+                )
+                .order_by(PipelineRun.start_time.desc())
+            )
+            runs = (await session.execute(stmt)).scalars().all()
 
         results = []
         for r in runs:
-            run_id = r["id"]
+            run_id = r.id
             activities = await self.get_activities_for_run(run_id)
 
             fail_val = None
-            if r["failure_reason"]:
+            if r.failure_reason:
                 try:
-                    fail_val = json.loads(r["failure_reason"])
+                    fail_val = json.loads(r.failure_reason)
                 except Exception:
                     fail_val = None
 
-            dur_ms = r["duration_in_ms"]
-            if (dur_ms is None or dur_ms == 0) and r["start_time"] and r["end_time"]:
+            dur_ms = r.duration_in_ms
+            if (dur_ms is None or dur_ms == 0) and r.start_time and r.end_time:
                 try:
-                    clean_st = str(r["start_time"]).replace("Z", "+00:00")
-                    clean_et = str(r["end_time"]).replace("Z", "+00:00")
+                    clean_st = str(r.start_time).replace("Z", "+00:00")
+                    clean_et = str(r.end_time).replace("Z", "+00:00")
                     st_dt = datetime.datetime.fromisoformat(clean_st)
                     et_dt = datetime.datetime.fromisoformat(clean_et)
                     dur_ms = int(max(0, (et_dt - st_dt).total_seconds() * 1000))
@@ -344,45 +391,44 @@ class PipelineRepository:
                     dur_ms = act_sum
 
             results.append({
-                "id": r["id"],
-                "pipelineId": r["pipeline_id"],
-                "pipelineName": r["pipeline_name"],
-                "workspaceId": r["workspace_id"],
-                "status": r["status"],
-                "startTime": r["start_time"],
-                "endTime": r["end_time"],
+                "id": r.id,
+                "pipelineId": r.pipeline_id,
+                "pipelineName": r.pipeline_name,
+                "workspaceId": r.workspace_id,
+                "status": r.status,
+                "startTime": r.start_time,
+                "endTime": r.end_time,
                 "durationInMs": dur_ms,
-                "invokeType": r["invoke_type"],
-                "isChild": bool(r["is_child"]),
-                "parentRunId": r["parent_run_id"],
-                "parentActivityName": r["parent_activity_name"],
+                "invokeType": r.invoke_type,
+                "isChild": bool(r.is_child),
+                "parentRunId": r.parent_run_id,
+                "parentActivityName": r.parent_activity_name,
                 "error": fail_val,
                 "activities": activities,
-                "childPipelines": []
+                "childPipelines": [],
             })
         return results
 
     async def get_parent_pipelines(self, workspace_id: str) -> List[Dict[str, Any]]:
         """Returns parent (master) pipelines for a workspace from the pipelines cache."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT id, displayName FROM pipelines
-                WHERE workspace_id = ? AND is_master = 1
-                ORDER BY displayName
-            """, (workspace_id,))
-            rows = await cursor.fetchall()
+        async with async_session_maker() as session:
+            stmt = select(Pipeline).where(
+                Pipeline.workspace_id == workspace_id,
+                Pipeline.is_master == 1,
+            ).order_by(Pipeline.displayName.asc())
+            rows = (await session.execute(stmt)).scalars().all()
             if not rows:
-                cursor = await db.execute("""
-                    SELECT id, displayName FROM pipelines
-                    WHERE workspace_id = ?
-                    ORDER BY displayName
-                """, (workspace_id,))
-                rows = await cursor.fetchall()
-            return [{"pipelineId": r["id"], "pipelineName": r["displayName"]} for r in rows]
+                stmt_all = select(Pipeline).where(Pipeline.workspace_id == workspace_id).order_by(Pipeline.displayName.asc())
+                rows = (await session.execute(stmt_all)).scalars().all()
+            return [{"pipelineId": r.id, "pipelineName": r.displayName} for r in rows]
 
-    async def save_schedules(self, workspace_id: str, schedules: List[Dict[str, Any]], updated_at: str):
-        async with aiosqlite.connect(self.db_path) as db:
+    async def save_schedules(self, workspace_id: str, schedules: List[Dict[str, Any]], updated_at: Optional[str] = None) -> None:
+        """Persists pipeline schedule and trigger configurations into local SQLite cache."""
+        if not schedules:
+            return
+        if not updated_at:
+            updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        async with async_session_maker() as session:
             for s in schedules:
                 pid = s.get("pipelineId")
                 name = s.get("pipelineName", "")
@@ -392,78 +438,78 @@ class PipelineRepository:
                 tz = s.get("timeZone", "UTC")
                 raw = json.dumps(s.get("rawConfiguration", {}))
 
-                await db.execute("""
-                    INSERT INTO pipeline_schedules (
-                        pipeline_id, workspace_id, pipeline_name, enabled,
-                        schedule_type, next_run_time, time_zone, raw_configuration, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(pipeline_id) DO UPDATE SET
-                        enabled=excluded.enabled,
-                        schedule_type=excluded.schedule_type,
-                        next_run_time=excluded.next_run_time,
-                        time_zone=excluded.time_zone,
-                        raw_configuration=excluded.raw_configuration,
-                        updated_at=excluded.updated_at
-                """, (pid, workspace_id, name, enabled, stype, next_run, tz, raw, updated_at))
-            await db.commit()
+                stmt = sqlite_upsert(PipelineSchedule).values(
+                    pipeline_id=pid,
+                    workspace_id=workspace_id,
+                    pipeline_name=name,
+                    enabled=enabled,
+                    schedule_type=stype,
+                    next_run_time=next_run,
+                    time_zone=tz,
+                    raw_configuration=raw,
+                    updated_at=updated_at,
+                ).on_conflict_do_update(
+                    index_elements=[PipelineSchedule.pipeline_id],
+                    set_={
+                        "enabled": enabled,
+                        "schedule_type": stype,
+                        "next_run_time": next_run,
+                        "time_zone": tz,
+                        "raw_configuration": raw,
+                        "updated_at": updated_at,
+                    },
+                )
+                await session.execute(stmt)
+            await session.commit()
 
     async def get_pipeline_schedules(self, workspace_id: str) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT pipeline_id, workspace_id, pipeline_name, enabled,
-                       schedule_type, next_run_time, time_zone, raw_configuration
-                FROM pipeline_schedules
-                WHERE workspace_id = ?
-                ORDER BY pipeline_name ASC
-            """, (workspace_id,))
-            rows = await cursor.fetchall()
+        """Retrieves all pipeline schedule definitions cached for a workspace."""
+        async with async_session_maker() as session:
+            stmt = select(PipelineSchedule).where(PipelineSchedule.workspace_id == workspace_id).order_by(PipelineSchedule.pipeline_name.asc())
+            rows = (await session.execute(stmt)).scalars().all()
             results = []
             for r in rows:
                 raw_cfg = {}
-                if r["raw_configuration"]:
+                if r.raw_configuration:
                     try:
-                        raw_cfg = json.loads(r["raw_configuration"])
+                        raw_cfg = json.loads(r.raw_configuration)
                     except Exception:
                         raw_cfg = {}
                 results.append({
-                    "pipelineId": r["pipeline_id"],
-                    "pipelineName": r["pipeline_name"],
-                    "enabled": bool(r["enabled"]),
-                    "scheduleType": r["schedule_type"] or "Manual / None",
-                    "nextRunTime": r["next_run_time"],
-                    "timeZone": r["time_zone"] or "UTC",
-                    "rawConfiguration": raw_cfg
+                    "pipelineId": r.pipeline_id,
+                    "pipelineName": r.pipeline_name,
+                    "enabled": bool(r.enabled),
+                    "scheduleType": r.schedule_type or "Manual / None",
+                    "nextRunTime": r.next_run_time,
+                    "timeZone": r.time_zone or "UTC",
+                    "rawConfiguration": raw_cfg,
                 })
             return results
 
     async def get_schedule_for_pipeline(self, workspace_id: str, pipeline_id: str) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT pipeline_id, workspace_id, pipeline_name, enabled,
-                       schedule_type, next_run_time, time_zone, raw_configuration
-                FROM pipeline_schedules
-                WHERE workspace_id = ? AND pipeline_id = ?
-            """, (workspace_id, pipeline_id))
-            r = await cursor.fetchone()
+        """Retrieves the schedule definition for a specific pipeline ID."""
+        async with async_session_maker() as session:
+            stmt = select(PipelineSchedule).where(
+                PipelineSchedule.workspace_id == workspace_id,
+                PipelineSchedule.pipeline_id == pipeline_id,
+            )
+            r = (await session.execute(stmt)).scalar_one_or_none()
             if not r:
                 return None
             raw_cfg = {}
-            if r["raw_configuration"]:
+            if r.raw_configuration:
                 try:
-                    raw_cfg = json.loads(r["raw_configuration"])
+                    raw_cfg = json.loads(r.raw_configuration)
                 except Exception:
                     raw_cfg = {}
             return {
-                "pipelineId": r["pipeline_id"],
-                "pipelineName": r["pipeline_name"],
-                "enabled": bool(r["enabled"]),
-                "scheduleType": r["schedule_type"] or "Manual / None",
-                "nextRunTime": r["next_run_time"],
-                "timeZone": r["time_zone"] or "UTC",
-                "rawConfiguration": raw_cfg
+                "pipelineId": r.pipeline_id,
+                "pipelineName": r.pipeline_name,
+                "enabled": bool(r.enabled),
+                "scheduleType": r.schedule_type or "Manual / None",
+                "nextRunTime": r.next_run_time,
+                "timeZone": r.time_zone or "UTC",
+                "rawConfiguration": raw_cfg,
             }
 
     async def get_workspace_latest_tree(self, workspace_id: str) -> List[Dict[str, Any]]:
@@ -473,96 +519,130 @@ class PipelineRepository:
         - Sub-pipelines are strictly nested inside parent activities.
         - Attaches SLA config, active incident, and schedule summary.
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-
-            cursor = await db.execute("""
-                SELECT id, displayName, is_master, prefix
-                FROM pipelines
-                WHERE workspace_id = ? AND is_master = 1
-                ORDER BY displayName ASC
-            """, (workspace_id,))
-            pipeline_rows = await cursor.fetchall()
+        async with async_session_maker() as session:
+            # 1. Fetch pipelines for workspace
+            stmt_pipes = select(Pipeline).where(
+                Pipeline.workspace_id == workspace_id,
+                Pipeline.is_master == 1,
+            ).order_by(Pipeline.displayName.asc())
+            pipeline_rows = (await session.execute(stmt_pipes)).scalars().all()
 
             if not pipeline_rows:
-                cursor = await db.execute("""
-                    SELECT id, displayName, is_master, prefix
-                    FROM pipelines
-                    WHERE workspace_id = ?
-                    ORDER BY displayName ASC
-                """, (workspace_id,))
-                pipeline_rows = await cursor.fetchall()
+                stmt_pipes_all = select(Pipeline).where(Pipeline.workspace_id == workspace_id).order_by(Pipeline.displayName.asc())
+                pipeline_rows = (await session.execute(stmt_pipes_all)).scalars().all()
 
             if not pipeline_rows:
                 return []
 
-            cursor = await db.execute("""
-                SELECT r.id, r.pipeline_id, r.pipeline_name, r.workspace_id, r.status,
-                       r.start_time, r.end_time, r.duration_in_ms, r.invoke_type,
-                       r.is_child, r.parent_run_id, r.parent_activity_name, r.failure_reason
-                FROM pipeline_runs r
-                INNER JOIN (
-                    SELECT pipeline_id, MAX(COALESCE(start_time, '1970-01-01')) as max_start
-                    FROM pipeline_runs
-                    WHERE workspace_id = ?
-                    GROUP BY pipeline_id
-                ) latest ON r.pipeline_id = latest.pipeline_id 
-                         AND COALESCE(r.start_time, '1970-01-01') = latest.max_start
-                WHERE r.workspace_id = ?
-            """, (workspace_id, workspace_id))
-            latest_run_rows = await cursor.fetchall()
-            latest_runs_by_pid = {r["pipeline_id"]: dict(r) for r in latest_run_rows}
+            # 2. Subquery for latest run per pipeline
+            latest_sub = (
+                select(
+                    PipelineRun.pipeline_id,
+                    func.max(func.coalesce(PipelineRun.start_time, "1970-01-01")).label("max_start"),
+                )
+                .where(PipelineRun.workspace_id == workspace_id)
+                .group_by(PipelineRun.pipeline_id)
+                .subquery()
+            )
 
-            cursor = await db.execute("""
-                SELECT pipeline_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
-                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
-                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
-                FROM sla_configs
-                WHERE workspace_id = ?
-            """, (workspace_id,))
-            sla_rows = await cursor.fetchall()
-            sla_by_pid = {
-                s["pipeline_id"]: {
-                    "pipelineId": s["pipeline_id"],
-                    "workspaceId": workspace_id,
-                    "l1Email": s["l1_email"],
-                    "l1Name": s["l1_name"] or "",
-                    "l2Email": s["l2_email"],
-                    "l2Name": s["l2_name"] or "",
-                    "slaMinutes": s["sla_minutes"],
-                    "sla1Minutes": s["sla1_minutes"],
-                    "sla2Minutes": s["sla2_minutes"],
-                } for s in sla_rows
+            latest_runs_stmt = (
+                select(PipelineRun)
+                .join(
+                    latest_sub,
+                    and_(
+                        PipelineRun.pipeline_id == latest_sub.c.pipeline_id,
+                        func.coalesce(PipelineRun.start_time, "1970-01-01") == latest_sub.c.max_start,
+                    ),
+                )
+                .where(PipelineRun.workspace_id == workspace_id)
+            )
+            latest_run_rows = (await session.execute(latest_runs_stmt)).scalars().all()
+            latest_runs_by_pid = {
+                r.pipeline_id: {
+                    "id": r.id,
+                    "pipeline_id": r.pipeline_id,
+                    "pipeline_name": r.pipeline_name,
+                    "workspace_id": r.workspace_id,
+                    "status": r.status,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                    "duration_in_ms": r.duration_in_ms,
+                    "invoke_type": r.invoke_type,
+                    "is_child": r.is_child,
+                    "parent_run_id": r.parent_run_id,
+                    "parent_activity_name": r.parent_activity_name,
+                    "failure_reason": r.failure_reason,
+                }
+                for r in latest_run_rows
             }
 
-            cursor = await db.execute("""
-                SELECT id, pipeline_id, pipeline_name, pipeline_run_id, status, failed_at, sla_target_time,
-                       l1_notified_at, l2_escalated_at, resolved_at, resolved_by, error_message
-                FROM sla_incidents
-                WHERE workspace_id = ? AND status IN ('ACTIVE', 'ESCALATED_L2', 'RESOLVED')
-                ORDER BY failed_at DESC
-            """, (workspace_id,))
-            incident_rows = await cursor.fetchall()
+            # 3. SLA configs
+            sla_stmt = select(SLAConfig).where(SLAConfig.workspace_id == workspace_id)
+            sla_rows = (await session.execute(sla_stmt)).scalars().all()
+            sla_by_pid = {
+                s.pipeline_id: {
+                    "pipelineId": s.pipeline_id,
+                    "workspaceId": workspace_id,
+                    "l1Email": s.l1_email or "",
+                    "l1Name": s.l1_name or "",
+                    "l2Email": s.l2_email or "",
+                    "l2Name": s.l2_name or "",
+                    "slaMinutes": s.sla_minutes,
+                    "sla1Minutes": s.sla1_minutes if s.sla1_minutes is not None else s.sla_minutes,
+                    "sla2Minutes": s.sla2_minutes if s.sla2_minutes is not None else s.sla_minutes,
+                }
+                for s in sla_rows
+            }
+
+            # 4. Incidents
+            inc_stmt = (
+                select(SLAIncident)
+                .where(
+                    SLAIncident.workspace_id == workspace_id,
+                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "RESOLVED"]),
+                )
+                .order_by(SLAIncident.failed_at.desc())
+            )
+            incident_rows = (await session.execute(inc_stmt)).scalars().all()
             incident_by_run_id = {}
             for inc in incident_rows:
-                run_id = inc["pipeline_run_id"]
+                run_id = inc.pipeline_run_id
                 if run_id not in incident_by_run_id:
-                    incident_by_run_id[run_id] = dict(inc)
+                    incident_by_run_id[run_id] = {
+                        "id": inc.id,
+                        "pipeline_id": inc.pipeline_id,
+                        "pipeline_name": inc.pipeline_name,
+                        "pipeline_run_id": inc.pipeline_run_id,
+                        "status": inc.status,
+                        "failed_at": inc.failed_at,
+                        "sla_target_time": inc.sla_target_time,
+                        "l1_notified_at": inc.l1_notified_at,
+                        "l2_escalated_at": inc.l2_escalated_at,
+                        "resolved_at": inc.resolved_at,
+                        "resolved_by": inc.resolved_by,
+                        "error_message": inc.error_message,
+                    }
 
-            cursor = await db.execute("""
-                SELECT pipeline_id, enabled, schedule_type, next_run_time, time_zone
-                FROM pipeline_schedules
-                WHERE workspace_id = ?
-            """, (workspace_id,))
-            sched_rows = await cursor.fetchall()
-            sched_by_pid = {s["pipeline_id"]: dict(s) for s in sched_rows}
+            # 5. Schedules
+            sched_stmt = select(PipelineSchedule).where(PipelineSchedule.workspace_id == workspace_id)
+            sched_rows = (await session.execute(sched_stmt)).scalars().all()
+            sched_by_pid = {
+                s.pipeline_id: {
+                    "pipeline_id": s.pipeline_id,
+                    "enabled": s.enabled,
+                    "schedule_type": s.schedule_type,
+                    "next_run_time": s.next_run_time,
+                    "time_zone": s.time_zone,
+                }
+                for s in sched_rows
+            }
 
         run_objects_by_id: Dict[str, Dict[str, Any]] = {}
         top_level: List[Dict[str, Any]] = []
 
         for p in pipeline_rows:
-            pid = p["id"]
-            pname = p["displayName"]
+            pid = p.id
+            pname = p.displayName
             latest_run = latest_runs_by_pid.get(pid)
 
             sla_cfg = sla_by_pid.get(pid, {
@@ -570,7 +650,7 @@ class PipelineRepository:
                 "workspaceId": workspace_id,
                 "l1Email": "",
                 "l2Email": "",
-                "slaMinutes": 30
+                "slaMinutes": 30,
             })
             sched_info = sched_by_pid.get(pid)
 
@@ -614,7 +694,7 @@ class PipelineRepository:
                     "childPipelines": [],
                     "slaConfig": sla_cfg,
                     "incident": inc,
-                    "schedule": sched_info
+                    "schedule": sched_info,
                 }
                 run_objects_by_id[run_id] = run_obj
                 top_level.append(run_obj)
@@ -637,62 +717,57 @@ class PipelineRepository:
                     "childPipelines": [],
                     "slaConfig": sla_cfg,
                     "incident": None,
-                    "schedule": sched_info
+                    "schedule": sched_info,
                 }
                 run_objects_by_id[run_obj["id"]] = run_obj
                 top_level.append(run_obj)
 
-        run_ids = [r["id"] for r in top_level if not r["id"].startswith("norun-")]
-        if run_ids:
-            async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                placeholders = ",".join(["?"] * len(run_ids))
-                cursor = await db.execute(f"""
-                    SELECT activity_run_id, pipeline_run_id, activity_name, activity_type,
-                           status, start_time, end_time, duration_in_ms, error, output,
-                           child_pipeline_run_id, child_pipeline_data
-                    FROM activity_runs
-                    WHERE pipeline_run_id IN ({placeholders})
-                    ORDER BY start_time ASC
-                """, run_ids)
-                act_rows = await cursor.fetchall()
+        active_run_ids = [r["id"] for r in top_level if not r["id"].startswith("norun-")]
+        if active_run_ids:
+            async with async_session_maker() as session:
+                act_stmt = (
+                    select(ActivityRun)
+                    .where(ActivityRun.pipeline_run_id.in_(active_run_ids))
+                    .order_by(ActivityRun.start_time.asc())
+                )
+                act_rows = (await session.execute(act_stmt)).scalars().all()
 
                 for a in act_rows:
-                    prun_id = a["pipeline_run_id"]
+                    prun_id = a.pipeline_run_id
                     if prun_id in run_objects_by_id:
                         err_val = None
-                        if a["error"]:
+                        if a.error:
                             try:
-                                err_val = json.loads(a["error"])
+                                err_val = json.loads(a.error)
                             except Exception:
                                 pass
                         out_val = None
-                        if a["output"]:
+                        if a.output:
                             try:
-                                out_val = json.loads(a["output"])
+                                out_val = json.loads(a.output)
                             except Exception:
                                 pass
 
                         child_pipe = None
-                        if a["child_pipeline_data"]:
+                        if a.child_pipeline_data:
                             try:
-                                child_pipe = json.loads(a["child_pipeline_data"])
+                                child_pipe = json.loads(a.child_pipeline_data)
                             except Exception:
                                 pass
 
                         run_objects_by_id[prun_id]["activities"].append({
-                            "activityRunId": a["activity_run_id"],
+                            "activityRunId": a.activity_run_id,
                             "pipelineRunId": prun_id,
-                            "activityName": a["activity_name"],
-                            "activityType": a["activity_type"],
-                            "status": a["status"],
-                            "activityRunStart": a["start_time"],
-                            "activityRunEnd": a["end_time"],
-                            "durationInMs": a["duration_in_ms"],
+                            "activityName": a.activity_name,
+                            "activityType": a.activity_type,
+                            "status": a.status,
+                            "activityRunStart": a.start_time,
+                            "activityRunEnd": a.end_time,
+                            "durationInMs": a.duration_in_ms,
                             "error": err_val,
                             "output": out_val,
-                            "childPipelineRunId": a["child_pipeline_run_id"],
-                            "childPipeline": child_pipe
+                            "childPipelineRunId": a.child_pipeline_run_id,
+                            "childPipeline": child_pipe,
                         })
 
         for r_obj in top_level:
@@ -702,13 +777,18 @@ class PipelineRepository:
                     r_obj["durationInMs"] = act_sum
 
         top_level.sort(
-            key=lambda x: (x.get("startTime") is not None, x.get("startTime") or "", x.get("pipelineName", "")),
-            reverse=True
+            key=lambda x: (
+                x.get("startTime") is not None,
+                x.get("startTime") or "",
+                x.get("pipelineName", ""),
+            ),
+            reverse=True,
         )
         return top_level
 
     @staticmethod
-    def _is_schedule_active_in_range(sched_row: dict, start_date: datetime.date, end_date: datetime.date) -> tuple[bool, str]:
+    def _is_schedule_active_in_range(sched_row: Optional[dict], start_date: datetime.date, end_date: datetime.date) -> tuple[bool, str]:
+        """Determines whether a pipeline schedule pattern is active within the specified date range."""
         if not sched_row or not sched_row.get("enabled"):
             return False, ""
 
@@ -731,8 +811,8 @@ class PipelineRepository:
                 "enabled": sched_row.get("enabled"),
                 "configuration": {
                     "type": sched_row.get("schedule_type"),
-                    "nextRunTime": sched_row.get("next_run_time")
-                }
+                    "nextRunTime": sched_row.get("next_run_time"),
+                },
             }]
 
         curr = start_date
@@ -743,20 +823,14 @@ class PipelineRepository:
             for item in schedules_list:
                 if not item.get("enabled", True):
                     continue
-                cfg = item.get("configuration") or item
-                stype = (cfg.get("type") or item.get("scheduleType") or sched_row.get("schedule_type") or "").lower()
+                cfg = item.get("configuration") or {}
+                stype = str(cfg.get("type") or sched_row.get("schedule_type") or "").lower()
+
                 times = cfg.get("times") or []
-                time_str = times[0] if times else "08:00"
+                time_str = str(times[0]) if times else "00:00"
 
-                start_dt_str = cfg.get("startDateTime") or item.get("startDate")
-                end_dt_str = cfg.get("endDateTime") or item.get("endDate")
-                if start_dt_str and str(start_dt_str)[:10] > target_iso:
-                    continue
-                if end_dt_str and str(end_dt_str)[:10] < target_iso:
-                    continue
-
-                next_run = cfg.get("nextRunTime") or item.get("nextRunTime") or sched_row.get("next_run_time")
-                if next_run and str(next_run)[:10] == target_iso:
+                next_run = sched_row.get("next_run_time") or cfg.get("nextRunTime")
+                if next_run and str(next_run).startswith(target_iso):
                     return True, f"{target_iso} {str(next_run)[11:16]}"
 
                 if stype in ["daily", "day"]:
@@ -775,7 +849,7 @@ class PipelineRepository:
         workspace_id: str,
         date_preset: str = "latest",
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Builds the date-filtered execution hierarchy and forecast for a workspace.
@@ -817,16 +891,22 @@ class PipelineRepository:
             target_start = None
             target_end = None
 
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT DISTINCT substr(COALESCE(start_time, end_time), 1, 10) as run_date
-                FROM pipeline_runs
-                WHERE workspace_id = ? AND status != 'No Runs' AND start_time IS NOT NULL
-                ORDER BY 1 DESC
-            """, (workspace_id,))
-            date_rows = await cursor.fetchall()
-            available_dates = [r["run_date"] for r in date_rows if r["run_date"]]
+        async with async_session_maker() as session:
+            # Available dates query
+            date_stmt = (
+                select(
+                    func.substr(func.coalesce(PipelineRun.start_time, PipelineRun.end_time), 1, 10).label("run_date")
+                )
+                .where(
+                    PipelineRun.workspace_id == workspace_id,
+                    PipelineRun.status != "No Runs",
+                    PipelineRun.start_time.isnot(None),
+                )
+                .distinct()
+                .order_by(func.substr(func.coalesce(PipelineRun.start_time, PipelineRun.end_time), 1, 10).desc())
+            )
+            date_rows = (await session.execute(date_stmt)).all()
+            available_dates = [r[0] for r in date_rows if r[0]]
 
         if target_start is None or target_end is None:
             latest_tree = await self.get_workspace_latest_tree(workspace_id)
@@ -844,7 +924,7 @@ class PipelineRepository:
                     "startDate": None,
                     "endDate": None,
                     "isFuture": False,
-                    "availableRunDates": available_dates
+                    "availableRunDates": available_dates,
                 },
                 "metrics": {
                     "total": total,
@@ -854,58 +934,54 @@ class PipelineRepository:
                     "cancelled": cancelled,
                     "notRun": not_run,
                     "scheduled": 0,
-                    "notScheduled": 0
+                    "notScheduled": 0,
                 },
-                "pipelines": latest_tree
+                "pipelines": latest_tree,
             }
 
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT id, displayName, is_master, prefix
-                FROM pipelines
-                WHERE workspace_id = ? AND is_master = 1
-                ORDER BY displayName ASC
-            """, (workspace_id,))
-            pipeline_rows = await cursor.fetchall()
+        async with async_session_maker() as session:
+            # 1. Fetch pipelines
+            stmt_pipes = select(Pipeline).where(
+                Pipeline.workspace_id == workspace_id,
+                Pipeline.is_master == 1,
+            ).order_by(Pipeline.displayName.asc())
+            pipeline_rows = (await session.execute(stmt_pipes)).scalars().all()
             if not pipeline_rows:
-                cursor = await db.execute("""
-                    SELECT id, displayName, is_master, prefix
-                    FROM pipelines
-                    WHERE workspace_id = ?
-                    ORDER BY displayName ASC
-                """, (workspace_id,))
-                pipeline_rows = await cursor.fetchall()
+                stmt_pipes_all = select(Pipeline).where(Pipeline.workspace_id == workspace_id).order_by(Pipeline.displayName.asc())
+                pipeline_rows = (await session.execute(stmt_pipes_all)).scalars().all()
 
-            cursor = await db.execute("""
-                SELECT pipeline_id, l1_email, l2_email, l1_name, l2_name, sla_minutes,
-                       COALESCE(sla1_minutes, sla_minutes) AS sla1_minutes,
-                       COALESCE(sla2_minutes, sla_minutes) AS sla2_minutes
-                FROM sla_configs
-                WHERE workspace_id = ?
-            """, (workspace_id,))
-            sla_rows = await cursor.fetchall()
+            # 2. SLA configs
+            sla_stmt = select(SLAConfig).where(SLAConfig.workspace_id == workspace_id)
+            sla_rows = (await session.execute(sla_stmt)).scalars().all()
             sla_by_pid = {
-                s["pipeline_id"]: {
-                    "pipelineId": s["pipeline_id"],
+                s.pipeline_id: {
+                    "pipelineId": s.pipeline_id,
                     "workspaceId": workspace_id,
-                    "l1Email": s["l1_email"],
-                    "l1Name": s["l1_name"] or "",
-                    "l2Email": s["l2_email"],
-                    "l2Name": s["l2_name"] or "",
-                    "slaMinutes": s["sla_minutes"],
-                    "sla1Minutes": s["sla1_minutes"],
-                    "sla2Minutes": s["sla2_minutes"],
-                } for s in sla_rows
+                    "l1Email": s.l1_email or "",
+                    "l1Name": s.l1_name or "",
+                    "l2Email": s.l2_email or "",
+                    "l2Name": s.l2_name or "",
+                    "slaMinutes": s.sla_minutes,
+                    "sla1Minutes": s.sla1_minutes if s.sla1_minutes is not None else s.sla_minutes,
+                    "sla2Minutes": s.sla2_minutes if s.sla2_minutes is not None else s.sla_minutes,
+                }
+                for s in sla_rows
             }
 
-            cursor = await db.execute("""
-                SELECT pipeline_id, enabled, schedule_type, next_run_time, time_zone, raw_configuration
-                FROM pipeline_schedules
-                WHERE workspace_id = ?
-            """, (workspace_id,))
-            sched_rows = await cursor.fetchall()
-            sched_by_pid = {s["pipeline_id"]: dict(s) for s in sched_rows}
+            # 3. Schedules
+            sched_stmt = select(PipelineSchedule).where(PipelineSchedule.workspace_id == workspace_id)
+            sched_rows = (await session.execute(sched_stmt)).scalars().all()
+            sched_by_pid = {
+                s.pipeline_id: {
+                    "pipeline_id": s.pipeline_id,
+                    "enabled": s.enabled,
+                    "schedule_type": s.schedule_type,
+                    "next_run_time": s.next_run_time,
+                    "time_zone": s.time_zone,
+                    "raw_configuration": s.raw_configuration,
+                }
+                for s in sched_rows
+            }
 
         if is_future:
             forecast_pipelines = []
@@ -913,8 +989,8 @@ class PipelineRepository:
             not_scheduled_count = 0
 
             for p in pipeline_rows:
-                pid = p["id"]
-                pname = p["displayName"]
+                pid = p.id
+                pname = p.displayName
                 sched_info = sched_by_pid.get(pid)
                 is_sched, sched_time_str = self._is_schedule_active_in_range(sched_info, target_start, target_end)
 
@@ -923,7 +999,7 @@ class PipelineRepository:
                     "workspaceId": workspace_id,
                     "l1Email": "",
                     "l2Email": "",
-                    "slaMinutes": 30
+                    "slaMinutes": 30,
                 })
 
                 if is_sched:
@@ -955,12 +1031,12 @@ class PipelineRepository:
                     "childPipelines": [],
                     "slaConfig": sla_cfg,
                     "incident": None,
-                    "schedule": sched_info
+                    "schedule": sched_info,
                 })
 
             forecast_pipelines.sort(
                 key=lambda x: (x["status"] == "Scheduled", x["pipelineName"]),
-                reverse=True
+                reverse=True,
             )
 
             return {
@@ -970,7 +1046,7 @@ class PipelineRepository:
                     "startDate": target_start.isoformat(),
                     "endDate": target_end.isoformat(),
                     "isFuture": True,
-                    "availableRunDates": available_dates
+                    "availableRunDates": available_dates,
                 },
                 "metrics": {
                     "total": len(pipeline_rows),
@@ -980,55 +1056,97 @@ class PipelineRepository:
                     "cancelled": 0,
                     "notRun": not_scheduled_count,
                     "scheduled": scheduled_count,
-                    "notScheduled": not_scheduled_count
+                    "notScheduled": not_scheduled_count,
                 },
-                "pipelines": forecast_pipelines
+                "pipelines": forecast_pipelines,
             }
 
         s_iso = target_start.isoformat()
         e_iso = target_end.isoformat()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT r.id, r.pipeline_id, r.pipeline_name, r.workspace_id, r.status,
-                       r.start_time, r.end_time, r.duration_in_ms, r.invoke_type,
-                       r.is_child, r.parent_run_id, r.parent_activity_name, r.failure_reason
-                FROM pipeline_runs r
-                INNER JOIN (
-                    SELECT pipeline_id, MAX(COALESCE(start_time, '1970-01-01')) as max_start
-                    FROM pipeline_runs
-                    WHERE workspace_id = ?
-                      AND substr(COALESCE(start_time, end_time), 1, 10) >= ?
-                      AND substr(COALESCE(start_time, end_time), 1, 10) <= ?
-                      AND status != 'No Runs'
-                    GROUP BY pipeline_id
-                ) win ON r.pipeline_id = win.pipeline_id AND COALESCE(r.start_time, '1970-01-01') = win.max_start
-                WHERE r.workspace_id = ?
-            """, (workspace_id, s_iso, e_iso, workspace_id))
-            period_runs = await cursor.fetchall()
-            runs_by_pid = {r["pipeline_id"]: dict(r) for r in period_runs}
+        async with async_session_maker() as session:
+            # Subquery for maximum start_time within the date window
+            win_sub = (
+                select(
+                    PipelineRun.pipeline_id,
+                    func.max(func.coalesce(PipelineRun.start_time, "1970-01-01")).label("max_start"),
+                )
+                .where(
+                    PipelineRun.workspace_id == workspace_id,
+                    func.substr(func.coalesce(PipelineRun.start_time, PipelineRun.end_time), 1, 10) >= s_iso,
+                    func.substr(func.coalesce(PipelineRun.start_time, PipelineRun.end_time), 1, 10) <= e_iso,
+                    PipelineRun.status != "No Runs",
+                )
+                .group_by(PipelineRun.pipeline_id)
+                .subquery()
+            )
 
-            cursor = await db.execute("""
-                SELECT id, pipeline_id, pipeline_name, pipeline_run_id, status, failed_at, sla_target_time,
-                       l1_notified_at, l2_escalated_at, resolved_at, resolved_by, error_message
-                FROM sla_incidents
-                WHERE workspace_id = ? AND status IN ('ACTIVE', 'ESCALATED_L2', 'RESOLVED')
-                ORDER BY failed_at DESC
-            """, (workspace_id,))
-            inc_rows = await cursor.fetchall()
+            period_runs_stmt = (
+                select(PipelineRun)
+                .join(
+                    win_sub,
+                    and_(
+                        PipelineRun.pipeline_id == win_sub.c.pipeline_id,
+                        func.coalesce(PipelineRun.start_time, "1970-01-01") == win_sub.c.max_start,
+                    ),
+                )
+                .where(PipelineRun.workspace_id == workspace_id)
+            )
+            period_runs = (await session.execute(period_runs_stmt)).scalars().all()
+            runs_by_pid = {
+                r.pipeline_id: {
+                    "id": r.id,
+                    "pipeline_id": r.pipeline_id,
+                    "pipeline_name": r.pipeline_name,
+                    "workspace_id": r.workspace_id,
+                    "status": r.status,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                    "duration_in_ms": r.duration_in_ms,
+                    "invoke_type": r.invoke_type,
+                    "is_child": r.is_child,
+                    "parent_run_id": r.parent_run_id,
+                    "parent_activity_name": r.parent_activity_name,
+                    "failure_reason": r.failure_reason,
+                }
+                for r in period_runs
+            }
+
+            # SLA incidents for period
+            inc_stmt = (
+                select(SLAIncident)
+                .where(
+                    SLAIncident.workspace_id == workspace_id,
+                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "RESOLVED"]),
+                )
+                .order_by(SLAIncident.failed_at.desc())
+            )
+            inc_rows = (await session.execute(inc_stmt)).scalars().all()
             incident_by_run_id = {}
             for inc in inc_rows:
-                run_id = inc["pipeline_run_id"]
+                run_id = inc.pipeline_run_id
                 if run_id not in incident_by_run_id:
-                    incident_by_run_id[run_id] = dict(inc)
+                    incident_by_run_id[run_id] = {
+                        "id": inc.id,
+                        "pipeline_id": inc.pipeline_id,
+                        "pipeline_name": inc.pipeline_name,
+                        "pipeline_run_id": inc.pipeline_run_id,
+                        "status": inc.status,
+                        "failed_at": inc.failed_at,
+                        "sla_target_time": inc.sla_target_time,
+                        "l1_notified_at": inc.l1_notified_at,
+                        "l2_escalated_at": inc.l2_escalated_at,
+                        "resolved_at": inc.resolved_at,
+                        "resolved_by": inc.resolved_by,
+                        "error_message": inc.error_message,
+                    }
 
         period_pipelines = []
         run_objects_by_id: Dict[str, Dict[str, Any]] = {}
 
         for p in pipeline_rows:
-            pid = p["id"]
-            pname = p["displayName"]
+            pid = p.id
+            pname = p.displayName
             p_run = runs_by_pid.get(pid)
 
             sla_cfg = sla_by_pid.get(pid, {
@@ -1036,7 +1154,7 @@ class PipelineRepository:
                 "workspaceId": workspace_id,
                 "l1Email": "",
                 "l2Email": "",
-                "slaMinutes": 30
+                "slaMinutes": 30,
             })
             sched_info = sched_by_pid.get(pid)
 
@@ -1080,7 +1198,7 @@ class PipelineRepository:
                     "childPipelines": [],
                     "slaConfig": sla_cfg,
                     "incident": inc,
-                    "schedule": sched_info
+                    "schedule": sched_info,
                 }
                 run_objects_by_id[run_id] = run_obj
                 period_pipelines.append(run_obj)
@@ -1103,62 +1221,57 @@ class PipelineRepository:
                     "childPipelines": [],
                     "slaConfig": sla_cfg,
                     "incident": None,
-                    "schedule": sched_info
+                    "schedule": sched_info,
                 }
                 run_objects_by_id[run_obj["id"]] = run_obj
                 period_pipelines.append(run_obj)
 
         run_ids = [r["id"] for r in period_pipelines if not r["id"].startswith("norun-")]
         if run_ids:
-            async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                placeholders = ",".join(["?"] * len(run_ids))
-                cursor = await db.execute(f"""
-                    SELECT activity_run_id, pipeline_run_id, activity_name, activity_type,
-                           status, start_time, end_time, duration_in_ms, error, output,
-                           child_pipeline_run_id, child_pipeline_data
-                    FROM activity_runs
-                    WHERE pipeline_run_id IN ({placeholders})
-                    ORDER BY start_time ASC
-                """, run_ids)
-                act_rows = await cursor.fetchall()
+            async with async_session_maker() as session:
+                act_stmt = (
+                    select(ActivityRun)
+                    .where(ActivityRun.pipeline_run_id.in_(run_ids))
+                    .order_by(ActivityRun.start_time.asc())
+                )
+                act_rows = (await session.execute(act_stmt)).scalars().all()
 
                 for a in act_rows:
-                    prun_id = a["pipeline_run_id"]
+                    prun_id = a.pipeline_run_id
                     if prun_id in run_objects_by_id:
                         err_val = None
-                        if a["error"]:
+                        if a.error:
                             try:
-                                err_val = json.loads(a["error"])
+                                err_val = json.loads(a.error)
                             except Exception:
                                 pass
                         out_val = None
-                        if a["output"]:
+                        if a.output:
                             try:
-                                out_val = json.loads(a["output"])
+                                out_val = json.loads(a.output)
                             except Exception:
                                 pass
 
                         child_pipe = None
-                        if a["child_pipeline_data"]:
+                        if a.child_pipeline_data:
                             try:
-                                child_pipe = json.loads(a["child_pipeline_data"])
+                                child_pipe = json.loads(a.child_pipeline_data)
                             except Exception:
                                 pass
 
                         run_objects_by_id[prun_id]["activities"].append({
-                            "activityRunId": a["activity_run_id"],
+                            "activityRunId": a.activity_run_id,
                             "pipelineRunId": prun_id,
-                            "activityName": a["activity_name"],
-                            "activityType": a["activity_type"],
-                            "status": a["status"],
-                            "activityRunStart": a["start_time"],
-                            "activityRunEnd": a["end_time"],
-                            "durationInMs": a["duration_in_ms"],
+                            "activityName": a.activity_name,
+                            "activityType": a.activity_type,
+                            "status": a.status,
+                            "activityRunStart": a.start_time,
+                            "activityRunEnd": a.end_time,
+                            "durationInMs": a.duration_in_ms,
                             "error": err_val,
                             "output": out_val,
-                            "childPipelineRunId": a["child_pipeline_run_id"],
-                            "childPipeline": child_pipe
+                            "childPipelineRunId": a.child_pipeline_run_id,
+                            "childPipeline": child_pipe,
                         })
 
         for r_obj in period_pipelines:
@@ -1168,8 +1281,12 @@ class PipelineRepository:
                     r_obj["durationInMs"] = act_sum
 
         period_pipelines.sort(
-            key=lambda x: (x.get("startTime") is not None, x.get("startTime") or "", x.get("pipelineName", "")),
-            reverse=True
+            key=lambda x: (
+                x.get("startTime") is not None,
+                x.get("startTime") or "",
+                x.get("pipelineName", ""),
+            ),
+            reverse=True,
         )
 
         total = len(pipeline_rows)
@@ -1186,7 +1303,7 @@ class PipelineRepository:
                 "startDate": s_iso,
                 "endDate": e_iso,
                 "isFuture": False,
-                "availableRunDates": available_dates
+                "availableRunDates": available_dates,
             },
             "metrics": {
                 "total": total,
@@ -1196,9 +1313,9 @@ class PipelineRepository:
                 "cancelled": cancelled,
                 "notRun": not_run,
                 "scheduled": 0,
-                "notScheduled": 0
+                "notScheduled": 0,
             },
-            "pipelines": period_pipelines
+            "pipelines": period_pipelines,
         }
 
 

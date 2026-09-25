@@ -47,7 +47,7 @@ def _prune_sso_cache() -> None:
         sorted_keys = sorted(_sso_exchange_cache, key=lambda k: _sso_exchange_cache[k][1])
         for k in sorted_keys[: len(_sso_exchange_cache) - _SSO_CACHE_MAX_SIZE]:
             del _sso_exchange_cache[k]
-from app.modules.auth.dependency import current_active_user
+from app.modules.auth.dependency import current_active_user, _decode_entra_token
 from app.modules.users.models.user import User
 
 router = APIRouter(tags=["auth"])
@@ -57,67 +57,16 @@ router = APIRouter(tags=["auth"])
 # Azure AD helpers
 # ---------------------------------------------------------------------------
 
-def _get_issuer() -> str:
-    if getattr(settings, "AZURE_AD_ISSUER", None):
-        return settings.AZURE_AD_ISSUER
-    return f"https://login.microsoftonline.com/{settings.AZURE_AD_TENANT_ID}/v2.0"
-
-
-def _get_jwks_url() -> str:
-    return (
-        f"https://login.microsoftonline.com/{settings.AZURE_AD_TENANT_ID}/discovery/v2.0/keys"
-    )
-
-
-@lru_cache(maxsize=1)
-def _get_jwks_client() -> PyJWKClient:
-    return PyJWKClient(_get_jwks_url())
-
-
 def _verify_azure_token(token: str) -> dict[str, Any]:
-    if not settings.AZURE_AD_TENANT_ID or not settings.AZURE_AD_CLIENT_ID:
+    """Verifies and decodes an Entra ID token using dynamic key rotation and claims validation."""
+    tenant = settings.AZURE_AD_TENANT_ID or settings.AZURE_TENANT_ID
+    client_id = settings.AZURE_AD_CLIENT_ID or settings.AZURE_CLIENT_ID
+    if not tenant or not client_id:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Azure AD settings are not configured",
         )
-
-    jwks_client = _get_jwks_client()
-    signing_key = jwks_client.get_signing_key_from_jwt(token)
-
-    audiences = [
-        settings.AZURE_AD_CLIENT_ID,
-        f"api://{settings.AZURE_AD_CLIENT_ID}",
-    ]
-
-    claims = decode(
-        token,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience=audiences,
-        options={
-            "require": ["exp", "iat", "iss", "aud"],
-        },
-    )
-
-    allowed_issuers = {
-        _get_issuer(),
-        f"https://sts.windows.net/{settings.AZURE_AD_TENANT_ID}/",
-    }
-    issuer = claims.get("iss")
-    if issuer not in allowed_issuers:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Azure AD issuer",
-        )
-
-    token_tenant = claims.get("tid")
-    if token_tenant and token_tenant != settings.AZURE_AD_TENANT_ID:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Azure AD tenant",
-        )
-
-    return claims
+    return _decode_entra_token(token)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +151,7 @@ async def exchange_entra_id_token(
     user_manager=Depends(get_user_manager),
     db: AsyncSession = Depends(get_async_session),
 ):
+    """Exchanges an Entra ID token for a local JWT access and refresh token pair."""
     logger = logging.getLogger(__name__)
     now = time.time()
     cache_key = payload.id_token
@@ -300,7 +250,7 @@ router.include_router(
 
 from app.modules.auth.dependency import get_current_user
 from app.modules.auth.schema import UserProfile, WorkspaceAssignment
-from app.modules.auth.auth_assignments_service import auth_assignments_service
+from app.modules.admin.service import admin_service
 
 
 @router.get("/me", response_model=UserProfile)
@@ -315,5 +265,5 @@ async def get_my_assignments(
 ) -> list[WorkspaceAssignment]:
     """Assignments where the caller is the L1 or L2 responsible user."""
     if user.is_admin:
-        return await auth_assignments_service.list_all_assignments()
-    return await auth_assignments_service.list_assignments_for_user(user.email)
+        return await admin_service.list_all_assignments()
+    return await admin_service.list_assignments_for_user(user.email)

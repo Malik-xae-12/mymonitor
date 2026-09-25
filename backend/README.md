@@ -1,103 +1,237 @@
-# Backend: Microsoft Fabric Real-Time Job Monitoring API & Workers
+# Microsoft Fabric Real-Time Monitoring Hub — Backend
 
-The backend is a high-concurrency, asynchronous Python service built with FastAPI, SQLite WAL persistence, Microsoft Entra ID OAuth2 authentication, Google Gemini AI diagnostics, dynamic Fabric Lakehouse/Warehouse telemetry, and Gmail SMTP alerting.
-
----
-
-## Architecture & Subsystems
-
-### 1. Unified Lifespan Management (`app/main.py`)
-- Initializes the SQLite database and executes all DDL migrations during startup.
-- Spawns background worker tasks:
-  - `leased_poller`: Continuously checks active workspace leases and queries Microsoft Fabric.
-  - `alert_service`: Continuously monitors active pipeline durations against SLA thresholds.
-- Mounts REST routers, WebSocket hub, and serves compiled React frontend files.
-
-### 2. High-Speed SQLite Persistence (`app/services/db_service.py`)
-- Database path: `backend/data/fabric_monitor.db`
-- Concurrency hardening:
-  - `PRAGMA journal_mode=WAL;` (concurrent non-blocking reads and writes)
-  - `PRAGMA synchronous=NORMAL;`
-  - `PRAGMA busy_timeout=30000;` (prevents database locked errors)
-- **9 Core Tables:**
-  1. `workspaces`: Tenant workspaces and polling timestamps.
-  2. `pipelines`: Pipeline metadata, master/child flags.
-  3. `pipeline_runs`: Execution runs, status, start/end timestamps, invoke types.
-  4. `activity_runs`: Inner activity telemetry, error JSON, and child pipeline data.
-  5. `pipeline_schedules`: Recurrence rules, execution times, timezones, next run timestamps.
-  6. `sla_configs`: Warning/Breach thresholds, L1/L2 emails.
-  7. `sla_incidents`: Breach incidents, resolution status, escalation timestamps.
-  8. `table_log_mappings`: User-configured Lakehouse/Warehouse IDs and column mappings.
-  9. `ai_error_diagnostics`: Persistent cache of Gemini AI root-cause analysis and fix steps.
-- **Date Filtering Engine (`get_workspace_tree_by_date`):**
-  - Evaluates past executions against date windows (`yesterday`, `today`, `last_week`, custom dates).
-  - Evaluates future schedule forecasts (`tomorrow`, `next_week`, custom future dates) by checking recurrence rules.
-
-### 3. Google Gemini AI Diagnostics (`app/services/ai_diagnostic_service.py`)
-- Powered by `gemini-3.6-flash`.
-- Automatically analyzes pipeline and activity errors, error codes, and failure types.
-- Formulates:
-  - Root-cause summary.
-  - Error category classification.
-  - Step-by-step remediation guide.
-  - Verification & prevention recommendations.
-- Persistent error-signature hash caching in SQLite: repeated identical errors return in < 5ms with zero additional API token consumption.
-
-### 4. Dynamic Lakehouse & Warehouse Table Logging (`app/services/table_log_service.py`)
-- **Zero Hardcoding:** Discovers Lakehouses and Warehouses dynamically from the workspace via Fabric REST APIs.
-- Queries schemas and column names dynamically.
-- Correlates `pipeline_run_id` across:
-  - **Batch Header** (batch number, start/end times, pipeline run ID).
-  - **ETL Batch Details** (source name, table operations: data load vs source delete).
-  - **Bronze Log** (extracted records, load status, timestamps).
-  - **Silver Log** (cleaned/transformed row counts, error logs).
-
-### 5. Multi-Schedule Pipeline Client (`app/services/fabric_client.py`)
-- Queries Fabric's official DataPipeline job schedule endpoint: `GET /items/{itemId}/jobs/Pipeline/schedules`.
-- Extracts all configured schedules from `value: [...]` array, parsing type (`Daily`, `Weekly`), execution times, days of week, and timezone.
-
-### 6. Differential Polling & Terminal Caching (`app/services/leased_poller.py`)
-- **Active Viewer Leases:** Polling occurs ONLY for workspaces with $\ge 1$ active WebSocket connection. Idle workspaces consume 0 API calls.
-- **Terminal Run Caching:** Succeeded, Failed, and Cancelled runs are never queried again. Fabric `/jobs/instances` and `/queryactivityruns` are called ONLY for `InProgress` runs.
-
-### 7. Multi-User WebSocket Multiplexer (`app/services/connection_manager.py`)
-- Manages client connections grouped into workspace rooms.
-- Fans out identical telemetry snapshots to all viewers in a room simultaneously.
-
-### 8. SLA Watchdog & Gmail SMTP Alerting (`app/services/alert_service.py`)
-- Scans runs and compares duration against SLA thresholds.
-- Sends responsive HTML email alerts to L1 and L2 contacts using `uiaptracker@gmail.com` via `smtp.gmail.com:587 TLS`.
-- Logs alerts in `sla_incidents` to prevent duplicate notifications.
+The backend of the Microsoft Fabric Real-Time Monitoring Hub is a high-performance, asynchronous REST & WebSocket service built on **FastAPI** and **SQLAlchemy 2.0 Async ORM**. It interfaces with the Microsoft Fabric REST API, executes direct SQL queries against Lakehouse/Warehouse delta tables via TDS/ODBC endpoints, manages real-time telemetry streaming over WebSockets, handles automated two-tier SLA incident alerting and watchdog escalation, and provides AI-powered error diagnostics via Google Gemini.
 
 ---
 
-## Key REST & WebSocket Endpoints
+## Pure SQLAlchemy Async ORM Architecture
 
-| Method | Path | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/workspaces` | Discovers all accessible Fabric workspaces. |
-| `GET` | `/api/workspaces/{id}/snapshot` | Returns hierarchical pipeline tree with date filtering (`?date_preset=...&start_date=...&end_date=...`). |
-| `GET` | `/api/workspaces/{id}/pipelines/{pipeline_id}/history` | Returns all past execution runs and activities for a pipeline. |
-| `GET` | `/api/workspaces/{id}/pipelines/{pipeline_id}/schedule` | Returns all schedules configured for a specific pipeline. |
-| `GET` | `/api/workspaces/{id}/schedules` | Returns all upcoming pipeline schedules across the workspace. |
-| `POST` | `/api/workspaces/{id}/ai-diagnose` | Generates or retrieves cached Gemini AI root-cause analysis and fix steps. |
-| `GET` | `/api/workspaces/{id}/lakehouses-warehouses` | Discovers all Lakehouses and Warehouses in the workspace dynamically. |
-| `GET` | `/api/workspaces/{id}/tables-and-columns` | Fetches available tables and schema columns for a Lakehouse or Warehouse. |
-| `GET` | `/api/workspaces/{id}/table-log-mapping` | Retrieves saved dynamic table log column mapping configuration. |
-| `POST` | `/api/workspaces/{id}/table-log-mapping` | Saves dynamic table log column mapping configuration. |
-| `GET` | `/api/workspaces/{id}/pipelines/{pipeline_id}/table-logs` | Fetches dynamic table-level log telemetry for a pipeline run. |
-| `GET` | `/api/workspaces/{id}/pipelines/{pipeline_id}/sla` | Retrieves SLA thresholds and L1/L2 emails for a pipeline. |
-| `POST` | `/api/workspaces/{id}/pipelines/{pipeline_id}/sla` | Updates SLA thresholds and email recipients for a pipeline. |
-| `POST` | `/api/workspaces/{id}/pipelines/{pipeline_id}/test-email` | Dispatches an immediate verification test email. |
-| `POST` | `/api/workspaces/{id}/incidents/{incident_id}/resolve` | Resolves an active SLA breach incident. |
-| `WS` | `/ws/workspaces/{workspace_id}` | WebSocket stream for live real-time pipeline telemetry. |
+All internal application persistence operates exclusively through **SQLAlchemy 2.0 Async ORM** (`sqlite+aiosqlite:///./fabric_monitor.db` in WAL mode). The codebase enforces a **Zero Raw SQL Policy**:
+- **Type-Safe Queries**: Relational joins, filters, and window subqueries use `select()`, `and_()`, `or_()`, and `subquery()`.
+- **Atomic Bulk Upserts**: High-throughput writes utilize `sqlalchemy.dialects.sqlite.insert` with `on_conflict_do_update()`.
+- **Eager Relationship Loading**: User and role hierarchies load cleanly via `selectinload()`.
+- **Automated Verification**: Verified by automated test suite (`scratch/test_all_orm_functionality.py`) with 100% pass across all 7 operational domains.
 
 ---
 
-## Running the Backend
+## Architecture Overview
 
-```powershell
-# From mymonitor root directory:
-backend\venv\Scripts\activate
-python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+The backend strictly follows a **Modular Domain-Driven Architecture**. Every functional domain lives in its own directory under `app/modules/` and adheres to a predictable 5-part separation of concerns:
+
 ```
+app/modules/<domain>/
+├── router.py          # API route definitions, path/query validation, and dependency injection
+├── service.py         # Business logic, orchestration, external APIs, background workers
+├── repository.py      # Pure SQLAlchemy 2.0 Async ORM queries, transactions, and upserts (Zero Raw SQL)
+├── schema.py          # Pydantic V2 models for request validation and response serialization
+└── models/            # SQLAlchemy 2.0 DeclarativeBase database table definitions
+```
+
+---
+
+## Directory Structure
+
+```
+backend/
+├── app/
+│   ├── main.py                  # ASGI entry point executed by Uvicorn
+│   ├── app_factory.py           # Application factory, middleware, router mounting, workers
+│   ├── core/                    # Core configuration, security, JWT tokens, rate limiting
+│   ├── db/                      # SQLite database engine, WAL-mode sessions, and base mixins
+│   ├── shared/                  # Shared cross-domain clients (Fabric REST API client)
+│   └── modules/                 # Self-contained business domain modules
+│       ├── admin/               # Support assignments and user role administration
+│       ├── auth/                # Microsoft Entra ID SSO, JWKS key rotation, and session management
+│       ├── diagnostics/         # AI failure analysis with Google Gemini Flash
+│       ├── directory/           # Microsoft Graph API user and directory search
+│       ├── pipelines/           # Data pipeline trees, runs, activities, and leased poller
+│       ├── sla/                 # SLA monitoring, incident tracking, and SMTP email alerts
+│       ├── table_logs/          # Lakehouse/Warehouse SQL delta table logs and stage KPIs
+│       ├── users/               # Platform users, RBAC roles (Admin, L1, L2), and login audit
+│       ├── websocket/           # WebSocket live streaming and workspace viewer tracking
+│       └── workspaces/          # Workspace discovery, caching, and role-scoped filtering
+├── fabric_monitor.db            # Local SQLite database (WAL mode)
+└── requirements.txt             # Python dependencies
+```
+
+---
+
+## Core System Folders
+
+### 1. `app/core/` — Infrastructure & Security
+Handles cross-cutting concerns required across all domain modules:
+
+| File | Purpose |
+| :--- | :--- |
+| [`config.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/config.py) | Pydantic `BaseSettings` reading environment variables for Azure Entra ID, Fabric credentials, Google Gemini AI, SMTP mail servers, and database paths. |
+| [`tokens.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/tokens.py) | Cryptographic JWT access and refresh token management (`HS256`). Generates access tokens, manages session expiration carryover, and directly deletes consumed, revoked, or expired refresh tokens from the database table in real-time. |
+| [`security.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/security.py) | Cryptographic password hashing and verification using `passlib[bcrypt]`. |
+| [`csrf.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/csrf.py) | CSRF security utilities and header validations. |
+| [`events.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/events.py) | Application lifecycle event handlers executed on startup and shutdown. |
+| [`permissions.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/permissions.py) | Role-Based Access Control (RBAC) permission helpers and role constants. |
+| [`rate_limiter.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/rate_limiter.py) | Global SlowAPI rate limiter setup protecting sensitive auth and AI diagnosis endpoints. |
+| [`logging.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/core/logging.py) | Centralized structured logging formatters. |
+
+---
+
+### 2. `app/db/` — Database Engine & Persistence
+Manages the local SQLite database (`fabric_monitor.db`) operating with Write-Ahead Logging (WAL) for concurrent read-heavy operations:
+
+| File | Purpose |
+| :--- | :--- |
+| [`session.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/db/session.py) | Asynchronous SQLAlchemy session factory (`async_session_maker`), `aiosqlite` path resolver, and database initialization (`init_db`) ensuring WAL pragmas and schema creation. |
+| [`base.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/db/base.py) | Declarative ORM Base class from which all models inherit. |
+| [`mixins.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/db/mixins.py) | Common model mixins providing standardized `id`, `created_at`, and `updated_at` columns. |
+| [`models_import.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/db/models_import.py) | Central registry importing all ORM entities to ensure SQLAlchemy detects table definitions on startup. |
+
+---
+
+### 3. `app/shared/` — Cross-Domain Clients
+Reusable external communication clients:
+
+| File | Purpose |
+| :--- | :--- |
+| [`clients/fabric_client.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/shared/clients/fabric_client.py) | Asynchronous HTTP client wrapping the Microsoft Fabric REST API (`https://api.fabric.microsoft.com/v1`). Acquires Azure AD OAuth2 bearer tokens via Service Principal client credentials, manages in-memory token expiry, and exposes typed methods for querying workspaces, pipelines, execution instances, and activities. |
+| [`constants.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/shared/constants.py) | System-wide constants, default fallback names, and pagination limits. |
+
+---
+
+## Domain Modules (`app/modules/`)
+
+### 1. `pipelines` — Pipeline Telemetry & Hierarchical Trees
+The primary telemetry module responsible for ingesting, structuring, and serving pipeline execution runs.
+
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/pipelines/service.py):
+  - **`HierarchyTreeBuilder`**: Transforms flat pipeline runs and nested activities into a parent-child execution tree. Resolves child pipeline executions invoked via `ExecutePipeline` activities.
+  - **`LeasedWorkspacePoller`**: An intelligent background polling engine that continuously syncs pipeline runs from Fabric **only for workspaces that currently have active viewers** (via WebSocket leases). Automatically relaxes polling frequency when idle and scales up for active runs.
+  - **`PipelineService`**: High-level facade orchestrating snapshot generation, date-filtered queries, run history, and schedule forecasts.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/pipelines/repository.py): Local SQLite persistence for pipelines, pipeline runs, granular activity executions, and trigger schedule rules. Flags parent (`is_master = 1`) vs. dynamically invoked child pipelines (`is_master = 0`).
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/pipelines/router.py):
+  - `GET /api/workspaces/{id}/pipelines`: List all Data Pipelines in workspace.
+  - `GET /api/workspaces/{id}/pipelines/snapshot`: Live hierarchical execution tree with date filtering.
+  - `GET /api/workspaces/{id}/pipelines/{pid}/history`: Full chronological execution history.
+  - `GET /api/workspaces/{id}/pipelines/schedules`: Workspace-wide schedule configurations and next execution times.
+  - `GET /api/workspaces/{id}/pipelines/assignments`: Parent pipelines with assigned L1/L2 support engineers.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/pipelines/schema.py): Data models for `PipelineRun`, `ActivityRun`, and `WorkspaceSnapshotResponse`.
+
+---
+
+### 2. `workspaces` — Workspace Ingestion & Role Scoping
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/service.py): Queries Fabric REST API for available workspaces and enriches them with local support assignments. Scopes returned workspaces based on whether the caller is an Administrator or an assigned L1/L2 engineer.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/repository.py): Caches workspace metadata and queries user assignment mappings.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/router.py): `GET /api/workspaces`.
+
+---
+
+### 3. `auth` — Authentication, Entra ID SSO & JWT Lifecycle
+- [`dependency.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/dependency.py):
+  - **`_get_signing_key` & `_decode_entra_token`**: Validates RS256 tokens from Microsoft Entra ID using dynamic JWKS key retrieval. Features automatic retry and cache invalidation if Microsoft rotates or expires signing keys.
+  - **`get_current_user`**: Validates the bearer token, records login telemetry, queries user RBAC status, and scopes accessible workspaces.
+  - **`require_admin`**: Endpoint guard enforcing Administrator privileges.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/router.py):
+  - `POST /api/auth/entra-id/exchange`: Exchanges a Microsoft Entra ID token for a local JWT access and refresh token pair.
+  - `POST /api/auth/jwt/refresh`: Rotates the refresh token (maintaining original session expiry) and issues a fresh access token.
+  - `POST /api/auth/jwt/logout`: Revokes and deletes user refresh tokens from the database.
+  - `GET /api/auth/me`: Returns caller's profile, role, and assigned workspaces.
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/service.py): FastAPI-Users authentication manager and password verification backend.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/repository.py): User lookups by email and Entra ID Object ID (`oid`).
+- [`models/refresh_token.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/models/refresh_token.py): `refresh_token` table mapping.
+
+---
+
+### 4. `users` — User Profiles & Security Roles
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/service.py): Manages user accounts, assigns roles (`admin`, `l1`, `l2`), records login timestamps, and bootstraps default system roles and admin accounts.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/repository.py): Database operations for `users` and `roles` tables.
+- [`models/user.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/models/user.py): User ORM entity linked with security roles.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/router.py): User self-management endpoints.
+
+---
+
+### 5. `admin` — Workspace Assignments & System Administration
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/service.py): Manages assignment of L1 and L2 support engineers to workspaces and parent pipelines, including SLA warning and breach thresholds.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/router.py):
+  - `GET /api/admin/assignments`: List all workspace assignments.
+  - `POST /api/admin/assignments`: Create or update support assignments.
+  - `DELETE /api/admin/assignments/{workspace_id}`: Remove assignment.
+  - `GET /api/admin/users`: List registered platform users.
+  - `POST /api/admin/users`: Add or update directory user with support role.
+  - `PUT /api/admin/users/role`: Update user role.
+  - `DELETE /api/admin/users`: Remove user.
+  - `GET /api/admin/roles`: List available platform roles.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/admin/schema.py): Assignment and user administration request/response schemas.
+
+---
+
+### 6. `sla` — Service Level Agreements & Alert Escalation
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/service.py):
+  - **`AlertService`**: Background watchdog loop running every 30 seconds. Detects newly failed pipeline runs, creates `ACTIVE` SLA incidents, sends immediate HTML alerts to the assigned L1 engineer via SMTP, and automatically escalates to the L2 engineer (`ESCALATED_L2`) if the failure is not resolved before the SLA 2 threshold.
+  - **`SlaService`**: Incident lifecycle management (acknowledging and resolving incidents) and test alert dispatching.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/repository.py): Persistence for `sla_configs` and `sla_incidents`.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/router.py):
+  - `GET /api/sla/config/{workspace_id}/{pipeline_id}`: Retrieve SLA thresholds.
+  - `POST /api/sla/config/{workspace_id}/{pipeline_id}`: Save SLA thresholds and contacts.
+  - `GET /api/sla/incidents`: List all unresolved SLA incidents across the tenant.
+  - `POST /api/sla/incidents/{incident_id}/resolve`: Mark incident as resolved.
+  - `POST /api/sla/test-email`: Verify SMTP deliverability.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/schema.py): Data models for SLA configurations, incident cards, and email requests.
+
+---
+
+### 7. `table_logs` — Lakehouse & Warehouse SQL Delta Telemetry
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/table_logs/service.py):
+  - Discovers Lakehouses and Warehouses inside Fabric workspaces (including nested workspace folders).
+  - Connects to SQL Analytics Endpoints via `pyodbc` using Azure Active Directory Service Principal authentication.
+  - Queries `INFORMATION_SCHEMA.TABLES` and `INFORMATION_SCHEMA.COLUMNS` to assist users in mapping custom delta log tables.
+  - Queries custom batch header and step detail tables to compute load KPIs (total tables loaded, success/fail counts, average duration, rows processed) across Bronze and Silver layers.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/table_logs/repository.py): Stores workspace-to-table column mappings in SQLite (`table_log_mappings`).
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/table_logs/router.py):
+  - `GET /api/workspaces/{id}/table-logs/data-artifacts`: Discover Lakehouses & Warehouses.
+  - `GET /api/workspaces/{id}/table-logs/schemas-and-tables`: List user schemas and tables.
+  - `GET /api/workspaces/{id}/table-logs/columns`: Get table columns and data types.
+  - `GET /api/workspaces/{id}/table-logs/mapping`: Get saved column mapping.
+  - `POST /api/workspaces/{id}/table-logs/mapping`: Save column mapping.
+  - `GET /api/workspaces/{id}/table-logs`: Query aggregated KPIs and batch details.
+  - `GET /api/workspaces/{id}/table-logs/preview`: Preview top N rows from target table.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/table_logs/schema.py): Column mapping, preview, and batch log telemetry schemas.
+
+---
+
+### 8. `diagnostics` — AI Failure Analysis (Google Gemini Flash)
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/diagnostics/service.py):
+  - Analyzes pipeline and activity execution error messages using Google Gemini 3.6 Flash.
+  - **Security Sanitization**: Redacts passwords, connection strings, tokens, and secrets from error messages before sending to Gemini.
+  - **Fingerprint Hashing**: Computes deterministic MD5 hashes of sanitized error messages to query a local SQLite cache first, avoiding redundant LLM API calls and costs for recurring errors.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/diagnostics/repository.py): Caches AI diagnosis responses keyed by error hash.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/diagnostics/router.py):
+  - `POST /api/diagnostics/diagnose`: Analyze pipeline activity failure.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/diagnostics/schema.py): Diagnosis request and structured analysis response models.
+
+---
+
+### 9. `directory` — Microsoft Graph Enterprise User Search
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/directory/service.py): Connects to Microsoft Graph API (`https://graph.microsoft.com/v1.0/users`) using client credentials to provide user search and email autocomplete for L1/L2 team assignment.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/directory/router.py): `GET /api/directory/users/search`.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/directory/schema.py): Directory user model.
+
+---
+
+### 10. `websocket` — Real-Time Client Streaming
+- [`connection_manager.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/websocket/connection_manager.py): Tracks active client WebSocket connections per workspace ID. Provides broadcast capabilities for pipeline run status updates and SLA incident alerts.
+- [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/websocket/router.py): WebSocket endpoint at `/ws/{workspace_id}`. Registers active leases with `LeasedWorkspacePoller` when viewers connect and releases leases upon disconnection.
+
+---
+
+## Application Factory & Bootstrapping
+
+- **[`backend/app/app_factory.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/app_factory.py)**:
+  1. Initializes the FastAPI app with title and metadata.
+  2. Configures CORS middleware allowing configured frontend origins.
+  3. Registers SlowAPI rate-limiting state.
+  4. Automatically mounts all 10 domain routers under the `/api` prefix.
+  5. Connects WebSocket endpoints.
+  6. Configures application lifecycle event handlers:
+     - Initializes SQLite database schema in WAL mode.
+     - Seeds system default roles (`admin`, `l1`, `l2`).
+     - Starts `alert_service` (SLA watchdog timer).
+     - Starts `leased_poller` (background workspace poller).
+- **[`backend/app/main.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/main.py)**: Exposes `app = create_app()` for ASGI servers.

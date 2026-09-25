@@ -9,9 +9,13 @@ const TABS = [
 ];
 
 /**
- * Admin console shell with Fabric-style pivot tabs:
- *  - Tab 1: Users & Support Personnel: select people from Entra ID directory and define L1/L2 roles.
- *  - Tab 2: Pipeline L1/L2 Teams & SLA: select L1 and L2 for each pipeline from the users list, configure SLA, and access Table config.
+ * AdminConsole component.
+ * Renders the top-level Administrator management console with pivot tabs
+ * for directory user role configuration and per-pipeline L1/L2 team assignments.
+ *
+ * @param {Object} props
+ * @param {Function} props.onOpenTableConfig - Callback when user navigates to table log configuration
+ * @returns {JSX.Element}
  */
 export default function AdminConsole({ onOpenTableConfig }) {
   const [tab, setTab] = useState('users');

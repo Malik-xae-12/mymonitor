@@ -13,6 +13,7 @@ logger = logging.getLogger("fabric_monitor.ai_diagnostic")
 
 class AiDiagnosticService:
     def __init__(self):
+        """Initializes the AI diagnostic service with Gemini API settings."""
         self.api_key = settings.GEMINI_API_KEY
         self.model = settings.GEMINI_MODEL or "gemini-3.6-flash"
 
@@ -223,10 +224,14 @@ Raw Diagnostic Details:
 
 
 class DiagnosticsService:
+    """High-level service interface for generating AI diagnostic reports."""
+
     def __init__(self):
+        """Initializes the diagnostics facade service with AI failure analyzer."""
         self.ai = AiDiagnosticService()
 
     async def diagnose(self, payload: Any) -> Dict[str, Any]:
+        """Diagnose a pipeline activity error using Gemini AI and return actionable remediation instructions."""
         return await self.ai.diagnose_failure(
             pipeline_name=getattr(payload, "pipelineName", None) or "Pipeline",
             activity_name=getattr(payload, "activityName", None) or "Activity",

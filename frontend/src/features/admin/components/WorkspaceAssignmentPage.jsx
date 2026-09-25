@@ -1,3 +1,11 @@
+/**
+ * WorkspaceAssignmentPage Component
+ * 
+ * Provides an administrative workflow to assign L1 and L2 support personnel
+ * to workspaces, manage warning/breach SLA thresholds for parent pipelines,
+ * and transition into table log mapping configuration.
+ */
+
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users, ShieldCheck, Workflow, Table2, Save, Search, Loader2,
@@ -6,20 +14,25 @@ import {
 import {
   listWorkspaces, listAssignments, saveAssignment,
   listParentPipelines, savePipelineSla,
-} from './api/adminApi';
+} from '../api/adminApi';
+
+const DEFAULT_SLA1_MINUTES = 30;
+const DEFAULT_SLA2_MINUTES = 60;
 
 const EMPTY_FORM = {
   l1_email: '',
   l2_email: '',
-  sla1_minutes: 30,
-  sla2_minutes: 60,
+  sla1_minutes: DEFAULT_SLA1_MINUTES,
+  sla2_minutes: DEFAULT_SLA2_MINUTES,
   table_config_done: false,
 };
 
 /**
- * Admin onboarding console.
- * Purpose (stated in the header): assign who (L1/L2) is responsible for a
- * workspace, set SLA1/SLA2 thresholds, then complete table-log config.
+ * Admin onboarding and assignment console.
+ * Assigns L1/L2 personnel to workspaces and customizes per-pipeline SLAs.
+ *
+ * @param {Object} props
+ * @param {(workspaceId: string, workspaceName?: string) => void} [props.onOpenTableConfig] Callback to navigate to table log config.
  */
 export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
   const [workspaces, setWorkspaces] = useState([]);
@@ -36,6 +49,7 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
   const [savingPid, setSavingPid] = useState(null);
   const [pipelineNote, setPipelineNote] = useState(null);
 
+  /** Loads all available workspaces and existing workspace assignments. */
   const loadAll = async () => {
     setLoading(true);
     setStatus(null);
@@ -58,6 +72,12 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
     loadAll();
   }, []);
 
+  /**
+   * Loads parent pipelines for the specified workspace and populates per-pipeline SLA state.
+   *
+   * @param {string} workspaceId - Selected workspace ID.
+   * @param {boolean} [forceSync=false] - Whether to force a live sync from Fabric.
+   */
   const loadPipelines = async (workspaceId, forceSync = false) => {
     setPipelinesLoading(true);
     setPipelineNote(null);
@@ -67,7 +87,10 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
       setPipelines(arr);
       const slaMap = {};
       arr.forEach((p) => {
-        slaMap[p.pipelineId] = { sla1: p.sla1Minutes ?? 30, sla2: p.sla2Minutes ?? 60 };
+        slaMap[p.pipelineId] = {
+          sla1: p.sla1Minutes ?? DEFAULT_SLA1_MINUTES,
+          sla2: p.sla2Minutes ?? DEFAULT_SLA2_MINUTES,
+        };
       });
       setPipelineSla(slaMap);
       if (arr.length === 0) {
@@ -82,6 +105,11 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
 
   const selectedWorkspace = workspaces.find((w) => w.id === selectedId);
 
+  /**
+   * Sets the active workspace and loads its existing assignments and pipelines.
+   *
+   * @param {Object} ws - Workspace object.
+   */
   const selectWorkspace = (ws) => {
     setSelectedId(ws.id);
     setStatus(null);
@@ -94,8 +122,8 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
         ? {
             l1_email: existing.l1_email || '',
             l2_email: existing.l2_email || '',
-            sla1_minutes: existing.sla1_minutes ?? 30,
-            sla2_minutes: existing.sla2_minutes ?? 60,
+            sla1_minutes: existing.sla1_minutes ?? DEFAULT_SLA1_MINUTES,
+            sla2_minutes: existing.sla2_minutes ?? DEFAULT_SLA2_MINUTES,
             table_config_done: !!existing.table_config_done,
           }
         : EMPTY_FORM,
@@ -111,12 +139,18 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
     [workspaces, search],
   );
 
+  /** Validates email syntax. */
   const validEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const emailsReady = validEmail(form.l1_email) && validEmail(form.l2_email);
   const canSave = !!selectedWorkspace && emailsReady;
 
+  /**
+   * Saves custom SLA1 and SLA2 threshold values for a specific parent pipeline.
+   *
+   * @param {Object} p - Parent pipeline item.
+   */
   const handleSavePipelineSla = async (p) => {
-    const s = pipelineSla[p.pipelineId] || { sla1: 30, sla2: 60 };
+    const s = pipelineSla[p.pipelineId] || { sla1: DEFAULT_SLA1_MINUTES, sla2: DEFAULT_SLA2_MINUTES };
     const sla1 = Number(s.sla1);
     const sla2 = Number(s.sla2);
     if (!emailsReady || sla1 <= 0 || sla2 <= 0) return;
@@ -138,6 +172,11 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
     }
   };
 
+  /**
+   * Saves the workspace assignment form and optionally navigates to table log config.
+   *
+   * @param {boolean} [openTableConfig=false] - Whether to transition to table configuration upon success.
+   */
   const handleSave = async (openTableConfig = false) => {
     if (!canSave) return;
     setSaving(true);
@@ -165,6 +204,7 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
     }
   };
 
+  /** Checks if a workspace has an active assignment in local state. */
   const isAssigned = (id) => !!assignments[id];
 
   return (
@@ -331,7 +371,7 @@ export default function WorkspaceAssignmentPage({ onOpenTableConfig }) {
                       </thead>
                       <tbody>
                         {pipelines.map((p) => {
-                          const s = pipelineSla[p.pipelineId] || { sla1: 30, sla2: 60 };
+                          const s = pipelineSla[p.pipelineId] || { sla1: DEFAULT_SLA1_MINUTES, sla2: DEFAULT_SLA2_MINUTES };
                           return (
                             <tr key={p.pipelineId} className="border-b border-[#f3f2f1]">
                               <td className="px-3 py-2 text-[#242424]">{p.pipelineName}</td>

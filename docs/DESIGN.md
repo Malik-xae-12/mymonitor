@@ -1,72 +1,125 @@
-# Design System
+# Microsoft Fabric Real-Time Monitoring Hub — UI/UX Design System
 
-**Last Updated:** 2026-09-23
+**Document Version:** 3.0  
+**Updated:** 2026-09-26  
+**Status:** Approved & Implemented  
 
-The UI **must follow the Microsoft Fabric UI kit** (Fluent 2 design language). Every page
-must be self-explanatory and Fabric-native — a user opening a page should immediately
-understand what it is and where the controls are. Pages must not look “AI-generated”.
-Styling via Tailwind CSS 4 mapped to Fabric/Fluent tokens.
+---
 
-## 0. Design Source: Figma MCP + Fabric UI Kit
-- **Source of truth**: Microsoft Fabric UI kit (Figma Community file).
-- **Tooling**: Figma MCP (Framelink `figma-developer-mcp`) configured in `.agents/mcp_config.json`.
-  Set `FIGMA_API_KEY` (Figma personal access token) to enable it.
-- **Workflow**: pull frame specs/tokens from the Fabric UI kit via Figma MCP → map to Tailwind
-  tokens → build components (`components/ui`, `components/layout`) that match Fluent 2 exactly.
-- **Fluent 2 principles**: clear information hierarchy, consistent 4px spacing rhythm,
-  purposeful use of the Fabric command bar / nav rail / side pane patterns, accessible
-  contrast, and status semantics conveyed by both color and icon/label (never color alone).
+## 1. Design System Philosophy
 
-## 1. Color Tokens (Status-Driven)
-| Purpose | Color | Usage |
-| :-- | :-- | :-- |
-| Success / Succeeded | Emerald | Completed runs, recorded past-run dots |
-| Failure / Breach | Red | Failed runs, SLA breaches, error badges |
-| Warning | Amber | Near-SLA warnings, degraded states |
-| Running / InProgress | Blue | Active runs, live polling indicator |
-| Forecast / Scheduled | Purple | Upcoming schedule windows |
-| Cancelled / Idle | Slate / Gray | Cancelled runs, muted metadata |
+The **Microsoft Fabric Real-Time Monitoring Hub** delivers an ultra-premium, dark-mode-first mission control aesthetic engineered specifically for enterprise data operations engineers.
 
-## 2. Typography
-- System UI sans-serif stack via Tailwind defaults.
-- Dense tabular data uses smaller sizes (`text-xs` / `text-sm`) for row density.
-- Headings use medium/semibold weights; numeric metrics emphasized.
+Key visual principles:
+1. **Clarity Over Clutter**: Complex hierarchical relationships (orchestrators invoking child pipelines) are rendered as clean, expandable trees rather than disjointed tabular rows.
+2. **Immediate Status Recognition**: Status badges use high-contrast semantic colors, glowing borders, and micro-animations to instantly distinguish active, failed, and healthy workloads.
+3. **Sub-Second Feedback**: Running pipelines feature live ticking stopwatch duration counters and animated pulse indicators that provide immediate visual confirmation of execution progress.
+4. **Monospace Precision**: GUIDs, timestamps, row counts, and error codes are formatted in monospace typography for error-free scanning.
 
-## 3. Spacing & Layout
-- 4px base spacing scale (Tailwind default).
-- Fabric-style nav rail + suite/command bars; side pane for run detail.
-- Tree table for parent-child pipeline hierarchy.
+---
 
-## 4. Core Components
-`FabricNavRail`, `FabricSuiteBar`, `FabricCommandBar`, `FabricMetricCards`,
-`DateFilterBar`, `PipelineTreeTable` / `PipelineRow`, `ActivityList`,
-`RunHistoryModal`, `ErrorDetailModal`, `SlaConfigModal`, `PipelineScheduleModal`,
-`SchedulesDrawer`, `TableLog*` (config/dashboard/page), `WorkspaceSelector`.
+## 2. Color Palette & Semantic Design Tokens
 
-## 6. Page Meaning & Fabric UX Principles (must-follow)
-Every screen must communicate its purpose at a glance, following how real Microsoft Fabric
-pages are laid out:
+### 2.1 Surfaces & Backgrounds
+| Token | Hex Value | Usage |
+|---|---|---|
+| `bg-primary` | `#090d16` | Main viewport background |
+| `bg-card` | `#0f172a` | Primary card and table container background |
+| `bg-surface` | `#1e293b` | Secondary surface, table header, and modal background |
+| `border-subtle` | `#1e293b` | Divider lines and subtle borders |
+| `border-card` | `#334155` | Card borders and table grid lines |
+| `border-active` | `#3b82f6` | Focused inputs and selected tabs |
 
-| Page | Purpose (what the user must instantly understand) | Fabric pattern |
-| :-- | :-- | :-- |
-| **Sign-in** | “Authenticate with your organization account” | Centered Entra ID sign-in card |
-| **Workspace picker** | “Choose the workspace you own/monitor” | Fabric workspace list w/ search + roles |
-| **Admin → Assignment** | “Assign L1/L2 responsibility, set per-parent-pipeline SLA1/SLA2, table config” | Command bar + form sections + parent-pipeline SLA table |
-| **Monitoring** | “Live health of parent pipelines; drill into sub-pipelines” | Tree table, metric cards, side pane |
-| **Run history** | “Every past run of this pipeline with status + diagnostics” | Modal/list with status pills |
-| **Diagnostics** | “Why it failed + how to fix” | Side pane / modal, AI section clearly labeled |
-| **Schedules** | “All schedules for this pipeline” | Drawer/list with frequency + next run |
-| **Table logs** | “Batch lineage Header → Bronze → Silver + AI” | Table config wizard + dashboard |
+### 2.2 Execution Status Semantic Tokens
+| Status | Badge Color | Background Tint | Border Color | Visual Indicator |
+|---|---|---|---|---|
+| **Completed / Succeeded** | `#10b981` (Emerald) | `rgba(16, 185, 129, 0.12)` | `rgba(16, 185, 129, 0.3)` | Solid green dot |
+| **InProgress / Running** | `#3b82f6` (Blue) | `rgba(59, 130, 246, 0.15)` | `rgba(59, 130, 246, 0.4)` | Spinning SVG loader + Ticking timer |
+| **Failed** | `#ef4444` (Rose) | `rgba(239, 68, 68, 0.15)` | `rgba(239, 68, 68, 0.4)` | Glowing red dot + Pulsing alert ring |
+| **Cancelled** | `#f59e0b` (Amber) | `rgba(245, 158, 11, 0.12)` | `rgba(245, 158, 11, 0.3)` | Amber slash icon |
+| **Not Run / Idle** | `#64748b` (Slate) | `rgba(100, 116, 139, 0.12)` | `rgba(100, 116, 139, 0.3)` | Gray circle icon |
 
-Rules: primary action right-aligned in the command bar; destructive actions confirmed;
-empty states explain the next step; loading uses Fluent skeletons/spinners; role is always
-visible in the shell (Admin / L1 / L2 badge).
+### 2.3 SLA Incident Status Tokens
+| Incident State | Badge Color | Description |
+|---|---|---|
+| **`ACTIVE`** | `#f97316` (Orange) | Failure recorded; L1 notified; countdown ticking toward SLA1. |
+| **`ESCALATED_L2`** | `#dc2626` (Red) | SLA1 breached; escalated to L2; urgent intervention required. |
+| **`RESOLVED`** | `#10b981` (Green) | Incident acknowledged and resolved by operator. |
 
-The global suite bar is kept lean: it shows branding, search, role badge, user + sign-out,
-and (for admins) the "Admin setup" entry. The workspace selector and table-log-config controls
-were removed from the suite bar — workspace selection happens in-context (admin list / scoped
-monitoring), and table-log config lives inside the admin flow.
+---
 
-## 7. Responsive Matrix
-Verify at **375px** (mobile), **768px** (tablet), **1440px** (desktop). Primary target is the
-desktop operations console; mobile must remain readable without horizontal overflow.
+## 3. Typography & Font Hierarchy
+
+- **Primary Font**: `Inter`, `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, sans-serif.
+- **Code & Numeric Font**: `JetBrains Mono`, `Fira Code`, `Consolas`, monospace.
+
+| Element | Size | Weight | Line Height | Tracking | Color |
+|---|---|---|---|---|---|
+| Page Header | 24px | 700 (Bold) | 32px | -0.02em | `#ffffff` |
+| Section Title | 18px | 600 (Semi-bold) | 24px | -0.01em | `#f1f5f9` |
+| Metric Value | 28px | 800 (Extra-bold)| 36px | -0.03em | `#ffffff` |
+| Body Text | 14px | 400 (Regular) | 20px | 0 | `#cbd5e1` |
+| Caption / Label | 12px | 500 (Medium) | 16px | +0.02em | `#94a3b8` |
+| Monospace ID | 13px | 500 (Medium) | 18px | 0 | `#93c5fd` |
+
+---
+
+## 4. Key Component Specifications
+
+### 4.1 Metric Summary Cards (Top Rail)
+A responsive 6-card grid displaying:
+1. **Total Pipelines**: High-contrast white count with folder icon.
+2. **In Progress**: Glowing blue pulse with spinning loader icon.
+3. **Completed**: Emerald green checkmark icon.
+4. **Failed**: Rose red warning triangle with alert indicator.
+5. **Cancelled**: Amber ban icon.
+6. **Not Run**: Neutral slate clock icon.
+
+*Interaction*: Clicking a summary card toggles a quick-filter on the pipeline table below.
+
+### 4.2 Hierarchical Pipeline Tree Table
+- **Root Rows (Master Pipelines)**:
+  - Left column features an expandable chevron icon (`ChevronRight` when collapsed, `ChevronDown` when expanded).
+  - Displays Pipeline Name, Prefix tag, Status badge, Live Stopwatch / Total Duration, Start Time, Next Scheduled Run, and SLA Assignee badges.
+  - Action buttons: History (`Clock`), Schedules (`Calendar`), SLA Config (`Shield`), AI Diagnostics (`Sparkles`).
+- **Inner Expansion Panel (Activity Tree)**:
+  - Indented with a vertical connecting tree guide line.
+  - Lists sequential and parallel activities: Copy, Web, Notebook, StoredProcedure, Dataflow, ExecutePipeline.
+  - If an activity is an `ExecutePipeline` that invoked a child pipeline, the child pipeline renders as a nested card showing the child's status, duration, and its own inner activities.
+
+### 4.3 Live Duration Stopwatch
+For pipelines with status `InProgress`, the UI does not display a static duration. Instead:
+- Computes `elapsed = now - startTime`.
+- Ticks upwards every second in format `Xm Ys` (or `Xh Ym Zs`).
+- Paired with a subtle animated pulsing blue border around the row.
+
+### 4.4 Modals & Flyouts
+1. **Run History Modal**:
+   - Tabular view of past executions with duration bar charts, invocation types (Scheduled vs. Manual), and activity breakdown per run.
+2. **AI Diagnostics Modal**:
+   - Glassmorphic modal displaying Gemini 1.5 Pro root-cause analysis, failure error code callout, step-by-step remediation commands, and confidence meter.
+3. **Multi-Schedule Forecast Modal**:
+   - Displays all active triggers with recurrence badges (Daily, Weekly, Cron), active days, timezone, and countdown to next execution.
+4. **SLA Configuration Modal**:
+   - Form for setting SLA1 (L1 window in minutes), SLA2 (L2 escalation window), and assigning engineer emails with autocomplete directory search.
+   - Includes a "Send Test Email" action button to verify deliverability.
+5. **Table Log Mapping Modal**:
+   - Allows administrators to select Fabric Lakehouse/Warehouse artifacts and map audit columns for Batch Header, Bronze, and Silver Delta tables.
+
+---
+
+## 5. Responsive Layout Breakpoints
+
+| Breakpoint | Target Viewport | Layout Adjustments |
+|---|---|---|
+| **Mobile (`< 768px`)** | 375px – 430px | Single-column metric card stack; table switches to stacked card view; modals render full-screen. |
+| **Tablet (`768px – 1024px`)** | 768px – 1024px | 2-column or 3-column metric cards; table horizontally scrollable with sticky left pipeline name column. |
+| **Desktop (`> 1024px`)** | 1440px – 1920px | Full 6-column metric card bar; rich multi-column hierarchical tree table; side-by-side modal panels. |
+
+---
+
+## 6. UI States (Loading, Empty, Error)
+
+- **Loading State**: Shimmering skeleton placeholders matching the exact card and table row heights, preventing layout shifts.
+- **Empty State**: Custom SVG illustration with helpful copy: *"No pipelines found matching the selected filter"* and an action button to reset filters.
+- **Error State**: Non-blocking toast alerts for background synchronization warnings, and a centered error card with retry button if initial workspace discovery fails.

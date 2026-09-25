@@ -23,6 +23,7 @@ logger = logging.getLogger("fabric_monitor.table_logs")
 
 class TableLogService:
     def __init__(self):
+        """Initializes the table logs service with Azure authentication settings."""
         self.tenant_id = settings.AZURE_TENANT_ID
         self.client_id = settings.AZURE_CLIENT_ID
         self.client_secret = settings.AZURE_CLIENT_SECRET
@@ -63,6 +64,7 @@ class TableLogService:
 
     async def _fetch_warehouses(self, client: httpx.AsyncClient, headers: dict,
                                 workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """Fetches available Warehouses in the workspace from Fabric API."""
         wh_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/warehouses"
         try:
             res = await client.get(wh_url, headers=headers)
@@ -86,6 +88,7 @@ class TableLogService:
 
     async def _fetch_lakehouses(self, client: httpx.AsyncClient, headers: dict,
                                 workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """Fetches available Lakehouses in the workspace from Fabric API."""
         lh_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/lakehouses"
         try:
             res = await client.get(lh_url, headers=headers)
@@ -110,6 +113,7 @@ class TableLogService:
 
     async def _search_folders_for_artifacts(self, client: httpx.AsyncClient, headers: dict,
                                             workspace_id: str, artifacts: list, seen_ids: Set[str]):
+        """Searches nested workspace folders to discover Warehouses and Lakehouses."""
         try:
             folders_url = f"{fabric_client.base_url}/workspaces/{workspace_id}/folders"
             res = await client.get(folders_url, headers=headers)
@@ -157,6 +161,7 @@ class TableLogService:
     async def _get_artifact_connection(self, client: httpx.AsyncClient, headers: dict,
                                        workspace_id: str, artifact_id: str,
                                        artifact_type: str) -> Optional[str]:
+        """Extracts the SQL connection string and catalog name for an artifact."""
         try:
             if artifact_type == "Warehouse":
                 url = f"{fabric_client.base_url}/workspaces/{workspace_id}/warehouses/{artifact_id}"
@@ -176,6 +181,7 @@ class TableLogService:
         return None
 
     def _get_driver_name(self) -> str:
+        """Detects the installed ODBC driver for SQL Server connectivity."""
         available = pyodbc.drivers()
         for candidate in ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"]:
             if candidate in available:
@@ -189,6 +195,7 @@ class TableLogService:
         )
 
     def _get_pyodbc_connection(self, server_fqdn: str, database_name: str) -> pyodbc.Connection:
+        """Establishes an authenticated pyodbc connection using Azure credentials."""
         driver = self._get_driver_name()
         server = server_fqdn.strip()
         if not server.endswith(",1433") and ":" not in server:
@@ -231,7 +238,9 @@ class TableLogService:
                     raise
 
     async def get_schemas_and_tables(self, server_fqdn: str, database_name: str) -> List[Dict[str, str]]:
+        """Queries user schemas and tables from the target SQL endpoint."""
         def _fetch():
+            """Worker closure executing the schema discovery query synchronously."""
             conn = self._get_pyodbc_connection(server_fqdn, database_name)
             try:
                 cursor = conn.cursor()
@@ -258,7 +267,9 @@ class TableLogService:
         return await asyncio.to_thread(_fetch)
 
     async def get_table_columns(self, server_fqdn: str, database_name: str, schema_name: str, table_name: str) -> List[Dict[str, str]]:
+        """Queries column names and data types for a specific table."""
         def _fetch():
+            """Worker closure executing the column metadata query synchronously."""
             conn = self._get_pyodbc_connection(server_fqdn, database_name)
             try:
                 cursor = conn.cursor()
@@ -286,6 +297,7 @@ class TableLogService:
         pipeline_run_id: Optional[str] = None,
         batch_id: Optional[str] = None
     ) -> Dict[str, Any]:
+        """Executes aggregated and granular log queries against the mapped table."""
         mapping = await table_log_repository.get_table_log_mapping(workspace_id)
         if not mapping:
             return {
@@ -335,9 +347,11 @@ class TableLogService:
             }
 
         def safe_str(val):
+            """Safely casts any value to a trimmed string, returning empty string for None."""
             return str(val).strip() if val is not None else ""
 
         def _fetch_all():
+            """Worker closure executing batch log queries synchronously over pyodbc."""
             conn = self._get_pyodbc_connection(server_fqdn, database_name)
             try:
                 cursor = conn.cursor()
@@ -522,6 +536,7 @@ class TableLogService:
         silver_rows = raw_result["silverRows"]
 
         def resolve_table_and_schema(raw_tbl, raw_sch, raw_row):
+            """Extracts and normalizes schema and table names from raw log fields."""
             tbl = safe_str(raw_tbl)
             sch = safe_str(raw_sch)
             if tbl.isdigit() or not tbl:
@@ -540,6 +555,7 @@ class TableLogService:
             return tbl, sch
 
         def parse_duration_seconds(dur_val, start_val, end_val):
+            """Parses duration in seconds from elapsed time string or start/end timestamps."""
             if dur_val is not None:
                 try:
                     s = str(dur_val).replace("s", "").strip()
@@ -558,6 +574,7 @@ class TableLogService:
             return 0.0
 
         def format_dur_str(seconds):
+            """Formats duration in seconds into a human-readable display string."""
             if seconds <= 0:
                 return "0.00s"
             if seconds < 60:
@@ -567,6 +584,7 @@ class TableLogService:
             return f"{mins}m {rem:.1f}s"
 
         def parse_row_count(val):
+            """Safely parses row count values into an integer."""
             if val is None:
                 return 0
             try:
@@ -595,6 +613,7 @@ class TableLogService:
         br_dur_col = br_map.get("duration_col")
 
         def is_status_success(status_raw: str, err_raw: str) -> bool:
+            """Determines whether a stage execution succeeded based on status and error message."""
             s = safe_str(status_raw).lower()
             e = safe_str(err_raw).lower()
             if any(f in s for f in ["fail", "error", "abort", "exception", "cancel"]):
@@ -681,6 +700,7 @@ class TableLogService:
         avg_dur_sec = (sum(i["durationSec"] for i in all_items) / total_tables) if total_tables > 0 else 0.0
 
         def format_rows(count):
+            """Formats numeric row counts with K/M abbreviations for KPI cards."""
             if count >= 1_000_000:
                 return f"{count / 1_000_000:.1f}M"
             if count >= 1_000:
@@ -752,33 +772,30 @@ class TableLogService:
         }
 
 
-table_log_service = TableLogService()
-
-
-class TableLogDomainService:
-    async def get_data_artifacts(self, workspace_id: str) -> List[Dict[str, Any]]:
-        return await table_log_service.get_data_artifacts(workspace_id)
-
     async def get_sql_tables(self, payload: SqlTablesRequest) -> List[Dict[str, Any]]:
+        """List user schemas and tables from the target SQL connection endpoint."""
         server = (payload.serverFqdn or payload.server_fqdn or "").strip()
         db = (payload.databaseName or payload.database_name or "").strip()
         if not server or not db:
             return []
-        return await table_log_service.get_schemas_and_tables(server, db)
+        return await self.get_schemas_and_tables(server, db)
 
     async def get_sql_columns(self, payload: SqlColumnsRequest) -> List[Dict[str, Any]]:
+        """List column names and SQL data types for a given table."""
         server = (payload.serverFqdn or payload.server_fqdn or "").strip()
         db = (payload.databaseName or payload.database_name or "").strip()
         schema = (payload.schemaName or payload.schema_name or "").strip()
         table = (payload.tableName or payload.table_name or "").strip()
         if not server or not db or not schema or not table:
             return []
-        return await table_log_service.get_table_columns(server, db, schema, table)
+        return await self.get_table_columns(server, db, schema, table)
 
     async def get_table_log_mapping(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve persisted table log column mappings for a workspace."""
         return await table_log_repository.get_table_log_mapping(workspace_id)
 
     async def save_table_log_mapping(self, workspace_id: str, payload: SaveTableLogMappingRequest) -> Dict[str, Any]:
+        """Save or update table log column configuration for a workspace."""
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         await table_log_repository.save_table_log_mapping(
             workspace_id=workspace_id,
@@ -801,20 +818,11 @@ class TableLogDomainService:
         return {"status": "success", "workspaceId": workspace_id, "updatedAt": now_iso}
 
     async def delete_table_log_mapping(self, workspace_id: str) -> Dict[str, Any]:
+        """Clear table log configuration mapping for a workspace."""
         await table_log_repository.delete_table_log_mapping(workspace_id)
         return {"status": "success", "message": "Mapping cleared successfully."}
 
-    async def query_table_logs(
-        self,
-        workspace_id: str,
-        pipeline_run_id: Optional[str] = None,
-        batch_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        return await table_log_service.query_table_logs(
-            workspace_id=workspace_id,
-            pipeline_run_id=pipeline_run_id,
-            batch_id=batch_id,
-        )
 
-
-table_log_domain_service = TableLogDomainService()
+table_log_service = TableLogService()
+# Compatibility alias
+table_log_domain_service = table_log_service

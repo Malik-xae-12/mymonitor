@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_email_config() -> ConnectionConfig:
+    """Builds and returns the email server connection configuration."""
     return ConnectionConfig(
         MAIL_USERNAME=settings.MAIL_USERNAME,
         MAIL_PASSWORD=settings.MAIL_PASSWORD,
@@ -48,6 +49,7 @@ def get_email_config() -> ConnectionConfig:
 
 
 async def send_reset_password_email(user: User, token: str) -> None:
+    """Sends a password recovery email containing the reset token link."""
     if not all([settings.MAIL_SERVER, settings.MAIL_PORT, settings.MAIL_FROM]):
         raise ValueError(
             "Email configuration incomplete. "
@@ -75,7 +77,9 @@ async def send_reset_password_email(user: User, token: str) -> None:
 
 
 class StringIDMixin:
+    """Mixin to cast arbitrary user IDs to string."""
     def parse_id(self, value: any) -> str:
+        """Parses and casts the input value to a string."""
         return str(value)
 
 
@@ -84,11 +88,13 @@ class UserManager(StringIDMixin, BaseUserManager[User, str]):
     verification_token_secret = settings.VERIFICATION_SECRET_KEY
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
+        """Callback invoked immediately after user registration."""
         logger.info("User %s has registered.", user.id)
 
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
     ):
+        """Callback invoked after password reset is requested."""
         try:
             await send_reset_password_email(user, token)
             logger.info("Password reset email sent to %s", user.email)
@@ -101,6 +107,7 @@ class UserManager(StringIDMixin, BaseUserManager[User, str]):
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
+        """Callback invoked when email verification is requested."""
         logger.info("Verification requested for user %s", user.id)
 
     async def validate_password(
@@ -108,6 +115,7 @@ class UserManager(StringIDMixin, BaseUserManager[User, str]):
         password: str,
         user: UserCreate,
     ) -> None:
+        """Validates that a password satisfies length and complexity rules."""
         errors = validate_password_rules(password, user.email)
 
         if errors:
@@ -115,6 +123,7 @@ class UserManager(StringIDMixin, BaseUserManager[User, str]):
 
 
 async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db)):
+    """FastAPI dependency yielding the UserManager instance."""
     yield UserManager(user_db)
 
 
@@ -122,6 +131,7 @@ bearer_transport = BearerTransport(tokenUrl=f"/{AUTH_URL_PATH}/jwt/login")
 
 
 def get_jwt_strategy() -> JWTStrategy:
+    """Configures the JWT authentication strategy using system settings."""
     return JWTStrategy(
         secret=settings.ACCESS_SECRET_KEY,
         lifetime_seconds=settings.ACCESS_TOKEN_EXPIRE_SECONDS,

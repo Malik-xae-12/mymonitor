@@ -9,6 +9,7 @@ logger = logging.getLogger("fabric_monitor.workspaces")
 
 class WorkspaceService:
     async def list_workspaces(self) -> List[Dict[str, Any]]:
+        """Lists workspaces from Fabric enriched with local support assignments."""
         workspaces = await fabric_client.get_workspaces()
         try:
             assignments = await workspace_repository.get_all_assignments()

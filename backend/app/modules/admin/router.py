@@ -1,18 +1,16 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.modules.auth.auth_assignments_service import auth_assignments_service
+from app.modules.admin.service import admin_service
 from app.modules.auth.dependency import get_current_user, require_admin
-from app.modules.auth.schema import (
-    AssignmentUpsertRequest,
-    UserProfile,
-    WorkspaceAssignment,
-)
-from app.modules.users.schema import (
+from app.modules.admin.schema import (
     AddUserRequest,
+    AssignmentUpsertRequest,
     RoleResponse,
     SetRoleRequest,
+    UserProfile,
     UsersListResponse,
+    WorkspaceAssignment,
 )
 from app.modules.users.service import users_service
 
@@ -26,7 +24,8 @@ _SUPPORT_ROLES = {"l1", "l2"}
 async def list_assignments(
     _: UserProfile = Depends(require_admin),
 ) -> List[WorkspaceAssignment]:
-    return await auth_assignments_service.list_all_assignments()
+    """Retrieve all workspace-to-support assignments."""
+    return await admin_service.list_all_assignments()
 
 
 @router.post("/api/admin/assignments", response_model=WorkspaceAssignment)
@@ -34,7 +33,8 @@ async def upsert_assignment(
     payload: AssignmentUpsertRequest,
     admin: UserProfile = Depends(require_admin),
 ) -> WorkspaceAssignment:
-    return await auth_assignments_service.upsert_assignment(payload, assigned_by=admin.email)
+    """Create or update assignment of L1/L2 teams and SLA targets for a workspace."""
+    return await admin_service.upsert_assignment(payload, assigned_by=admin.email)
 
 
 @router.delete("/api/admin/assignments/{workspace_id}")
@@ -42,13 +42,15 @@ async def delete_assignment(
     workspace_id: str,
     _: UserProfile = Depends(require_admin),
 ) -> dict:
-    await auth_assignments_service.delete_assignment(workspace_id)
+    """Delete the support assignment for a specific workspace."""
+    await admin_service.delete_assignment(workspace_id)
     return {"success": True, "workspace_id": workspace_id}
 
 
 # ---- Users & Roles Management -----------------------------------
 @router.get("/api/admin/users", response_model=UsersListResponse)
 async def list_users(_: UserProfile = Depends(require_admin)) -> UsersListResponse:
+    """List all registered users and available support roles."""
     users = await users_service.list_users()
     roles = await users_service.list_roles()
     return UsersListResponse(users=users, roles=roles)
@@ -59,7 +61,7 @@ async def add_user(
     payload: AddUserRequest,
     _: UserProfile = Depends(require_admin),
 ) -> UsersListResponse:
-    """Adds or updates a directory user with role L1 or L2."""
+    """Add or update an Entra ID directory user with role L1 or L2."""
     if payload.role_id not in _SUPPORT_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -87,6 +89,7 @@ async def set_user_role(
     payload: SetRoleRequest,
     _: UserProfile = Depends(require_admin),
 ) -> UsersListResponse:
+    """Assign or modify an existing user's support role."""
     if payload.role_id not in _SUPPORT_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -109,6 +112,7 @@ async def delete_user(
     email: str,
     _: UserProfile = Depends(require_admin),
 ) -> UsersListResponse:
+    """Delete a support person from the team roster."""
     target = await users_service.resolve_access(email)
     if target[1]:
         raise HTTPException(
@@ -123,4 +127,6 @@ async def delete_user(
 
 @router.get("/api/roles", response_model=List[RoleResponse])
 async def list_roles(_: UserProfile = Depends(get_current_user)) -> List[RoleResponse]:
+    """Retrieve all configurable support roles."""
     return await users_service.list_roles()
+

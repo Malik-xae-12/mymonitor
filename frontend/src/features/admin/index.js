@@ -1,6 +1,9 @@
-export { default as AdminConsole } from './AdminConsole';
-export { default as UsersPage } from './UsersPage';
-export { default as PipelineTeamsPage } from './PipelineTeamsPage';
-export { default as WorkspaceAssignmentPage } from './WorkspaceAssignmentPage';
-export * from './api';
+/**
+ * Admin Feature Module
+ * 
+ * Re-exports components, custom hooks, and API endpoints for administration.
+ */
 
+export * from './components';
+export * from './hooks';
+export * from './api';

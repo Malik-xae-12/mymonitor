@@ -2,10 +2,11 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-import aiosqlite
+from sqlalchemy import func, select
+from app.db.session import async_session_maker
+from app.modules.sla.models.sla_config import SLAConfig
 
-from app.modules.users import repository
-from app.modules.users.fabric_users_repo import fabric_users_repository
+from app.modules.users.repository import user_repository
 from app.modules.users.schema import RoleResponse, UserResponse
 from app.modules.workspaces.repository import workspace_repository
 
@@ -19,25 +20,29 @@ DEFAULT_ROLES = [
 
 
 async def assign_role_to_user(db: AsyncSession, user_id: str, role_id: str) -> bool:
-    """Assign a role (admin, l1, l2) to a user."""
-    return await repository.assign_role_to_user(db, user_id, role_id)
+    """Assign a role (admin, l1, l2) to a user in the database session."""
+    return await user_repository.assign_role_to_user(db, user_id, role_id)
 
 
 class UsersService:
+    """Service layer managing user lifecycles, authentication permissions, and role assignments."""
+
     async def seed_defaults(self, admin_emails: List[str]) -> None:
-        """Seeds the role catalog and bootstraps admin users from configuration."""
-        await fabric_users_repository.seed_roles(DEFAULT_ROLES)
+        """Seed the default system roles and bootstrap administrator accounts from settings."""
+        await user_repository.seed_roles(DEFAULT_ROLES)
         for email in admin_emails:
             clean = (email or "").strip().lower()
             if clean:
-                await fabric_users_repository.set_role(clean, "admin")
+                await user_repository.set_role(clean, "admin")
 
     async def record_login(self, email: str, oid: str, display_name: str) -> None:
-        await fabric_users_repository.ensure_user(email, oid, display_name)
+        """Record or update user login telemetry and Entra ID object identifier."""
+        await user_repository.ensure_user(email, oid, display_name)
 
     async def resolve_access(self, email: str) -> Tuple[str, bool, List[str]]:
+        """Resolve a user's effective role, admin privilege flag, and accessible workspace IDs."""
         e = (email or "").strip().lower()
-        user = await fabric_users_repository.get_by_email(e)
+        user = await user_repository.get_by_email(e)
 
         if user and user.get("role_id") == "admin":
             return "admin", True, []
@@ -54,25 +59,30 @@ class UsersService:
                 role = "l2"
 
         if role == "none":
-            async with aiosqlite.connect(workspace_repository.db_path) as db:
-                c1 = await db.execute("SELECT 1 FROM sla_configs WHERE LOWER(l1_email) = ? LIMIT 1", (e,))
-                if await c1.fetchone():
+            async with async_session_maker() as session:
+                r1 = await session.execute(
+                    select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l1_email) == e).limit(1)
+                )
+                if r1.scalar_one_or_none():
                     role = "l1"
                 else:
-                    c2 = await db.execute("SELECT 1 FROM sla_configs WHERE LOWER(l2_email) = ? LIMIT 1", (e,))
-                    if await c2.fetchone():
+                    r2 = await session.execute(
+                        select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l2_email) == e).limit(1)
+                    )
+                    if r2.scalar_one_or_none():
                         role = "l2"
 
         if role == "none" and user and user.get("role_id") in ("l1", "l2"):
             role = user["role_id"]
 
         if role in ("l1", "l2") and (not user or user.get("role_id") != role):
-            await fabric_users_repository.assign_role_if_not_admin(e, role)
+            await user_repository.assign_role_if_not_admin(e, role)
 
         return role, False, workspace_ids
 
     async def list_users(self) -> List[UserResponse]:
-        rows = await fabric_users_repository.list_users()
+        """Fetch all registered platform users with their assigned role name."""
+        rows = await user_repository.list_users()
         return [
             UserResponse(
                 email=r["email"],
@@ -88,25 +98,30 @@ class UsersService:
         ]
 
     async def list_roles(self) -> List[RoleResponse]:
-        rows = await fabric_users_repository.list_roles()
+        """Fetch all configured security roles in the platform."""
+        rows = await user_repository.list_roles()
         return [RoleResponse(id=r["id"], name=r["name"], description=r.get("description")) for r in rows]
 
     async def set_role(self, email: str, role_id: str) -> None:
-        await fabric_users_repository.set_role(email, role_id)
+        """Update a specific user's assigned role."""
+        await user_repository.set_role(email, role_id)
 
     async def add_or_update_user(
         self, email: str, display_name: str, oid: str, role_id: str
     ) -> None:
-        await fabric_users_repository.add_or_update_user(email, display_name, oid, role_id)
+        """Add a new directory user or update an existing user's attributes and role."""
+        await user_repository.add_or_update_user(email, display_name, oid, role_id)
 
     async def delete_user(self, email: str) -> None:
-        await fabric_users_repository.delete_user(email)
+        """Delete a user account by email address."""
+        await user_repository.delete_user(email)
 
     async def ensure_assignment_users(self, l1_email: Optional[str], l2_email: Optional[str]) -> None:
+        """Ensure designated L1 and L2 assignees have their respective roles recorded."""
         if l1_email:
-            await fabric_users_repository.assign_role_if_not_admin(l1_email, "l1")
+            await user_repository.assign_role_if_not_admin(l1_email, "l1")
         if l2_email:
-            await fabric_users_repository.assign_role_if_not_admin(l2_email, "l2")
+            await user_repository.assign_role_if_not_admin(l2_email, "l2")
 
 
 users_service = UsersService()

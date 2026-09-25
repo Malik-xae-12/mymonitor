@@ -28,10 +28,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_SECONDS: int = 3600  # 1 hour
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Token cleanup scheduler
-    TOKEN_CLEANUP_INTERVAL_HOURS: int = 6
-    TOKEN_CLEANUP_RETENTION_DAYS: int = 30
-
     # ── Microsoft Fabric REST APIs (Service Principal) ───────────────
     AZURE_TENANT_ID: str = ""
     AZURE_CLIENT_ID: str = ""

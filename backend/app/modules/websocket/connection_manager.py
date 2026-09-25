@@ -17,6 +17,7 @@ class WorkspaceConnectionManager:
         self.rooms: Dict[str, Set[WebSocket]] = {}
 
     async def connect(self, workspace_id: str, websocket: WebSocket):
+        """Accepts and registers a new client WebSocket into the workspace room."""
         await websocket.accept()
         if workspace_id not in self.rooms:
             self.rooms[workspace_id] = set()
@@ -24,6 +25,7 @@ class WorkspaceConnectionManager:
         logger.info(f"WebSocket client connected to workspace {workspace_id}. Total viewers: {len(self.rooms[workspace_id])}")
 
     def disconnect(self, workspace_id: str, websocket: WebSocket):
+        """Removes a client WebSocket from the workspace room."""
         if workspace_id in self.rooms:
             self.rooms[workspace_id].discard(websocket)
             if not self.rooms[workspace_id]:
@@ -37,6 +39,7 @@ class WorkspaceConnectionManager:
         return list(self.rooms.keys())
 
     def get_viewer_count(self, workspace_id: str) -> int:
+        """Returns the current number of active viewers in a workspace room."""
         return len(self.rooms.get(workspace_id, set()))
 
     async def broadcast_to_workspace(self, workspace_id: str, message: dict):

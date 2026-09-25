@@ -1,29 +1,27 @@
-import json
 import datetime
+import json
 from typing import Any, Dict, Optional
-import aiosqlite
-from app.db.session import get_sqlite_path
+from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+
+from app.db.session import async_session_maker
+from app.modules.diagnostics.models.diagnostic import AIErrorDiagnostic
 
 
 class DiagnosticsRepository:
-    def __init__(self, db_path: Optional[str] = None):
-        self._db_path = db_path
+    """Repository handling persistence and cache retrieval for AI error diagnostic results."""
 
-    @property
-    def db_path(self) -> str:
-        return self._db_path or get_sqlite_path()
+    def __init__(self):
+        """Initializes the diagnostics repository backed by SQLAlchemy Async ORM."""
+        pass
 
     async def get_cached_ai_diagnosis(self, error_hash: str) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT diagnosis_json FROM ai_error_diagnostics WHERE error_hash = ?",
-                (error_hash,),
-            )
-            row = await cursor.fetchone()
-            if row and row["diagnosis_json"]:
+        """Retrieve previously cached AI diagnosis matching error fingerprint hash."""
+        async with async_session_maker() as session:
+            diag = await session.get(AIErrorDiagnostic, error_hash)
+            if diag and diag.diagnosis_json:
                 try:
-                    data = json.loads(row["diagnosis_json"])
+                    data = json.loads(diag.diagnosis_json)
                     data["cached"] = True
                     return data
                 except Exception:
@@ -39,31 +37,27 @@ class DiagnosticsRepository:
         pipeline_name: str,
         diagnosis: Dict[str, Any],
     ) -> None:
+        """Store newly generated AI diagnosis keyed by deterministic error hash."""
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         diag_str = json.dumps(diagnosis)
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT INTO ai_error_diagnostics (
-                    error_hash, error_code, error_message, activity_type,
-                    pipeline_name, diagnosis_json, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(error_hash) DO UPDATE SET
-                    diagnosis_json=excluded.diagnosis_json,
-                    created_at=excluded.created_at
-                """,
-                (
-                    error_hash,
-                    error_code,
-                    error_message,
-                    activity_type,
-                    pipeline_name,
-                    diag_str,
-                    now_iso,
-                ),
+        async with async_session_maker() as session:
+            stmt = sqlite_upsert(AIErrorDiagnostic).values(
+                error_hash=error_hash,
+                error_code=error_code,
+                error_message=error_message,
+                activity_type=activity_type,
+                pipeline_name=pipeline_name,
+                diagnosis_json=diag_str,
+                created_at=now_iso,
+            ).on_conflict_do_update(
+                index_elements=[AIErrorDiagnostic.error_hash],
+                set_={
+                    "diagnosis_json": diag_str,
+                    "created_at": now_iso,
+                },
             )
-            await db.commit()
+            await session.execute(stmt)
+            await session.commit()
 
 
 diagnostic_repository = DiagnosticsRepository()

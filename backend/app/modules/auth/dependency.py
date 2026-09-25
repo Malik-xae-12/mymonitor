@@ -29,30 +29,51 @@ _VALID_ISSUERS = {
     f"https://sts.windows.net/{_TENANT}/",
 }
 
-try:
-    _jwk_client = PyJWKClient(_JWKS_URI)
-except Exception:
-    _jwk_client = None
+_jwk_client: Optional[PyJWKClient] = None
+
+
+def _get_signing_key(token: str):
+    """Retrieves the RS256 signing key from Microsoft's JWKS endpoint with automatic key rotation recovery."""
+    global _jwk_client
+    if _jwk_client is None:
+        _jwk_client = PyJWKClient(_JWKS_URI, cache_jwk_set=True, lifespan=86400)
+    try:
+        return _jwk_client.get_signing_key_from_jwt(token)
+    except Exception:
+        # Microsoft keys may have rotated: re-instantiate JWK client and retry once
+        _jwk_client = PyJWKClient(_JWKS_URI, cache_jwk_set=True, lifespan=86400)
+        return _jwk_client.get_signing_key_from_jwt(token)
 
 
 def _decode_entra_token(token: str) -> dict:
-    if not _jwk_client:
-        raise ValueError("JWK client uninitialized")
-    signing_key = _jwk_client.get_signing_key_from_jwt(token)
+    """Decodes and validates a Microsoft Entra ID (Azure AD) RS256 bearer token."""
+    signing_key = _get_signing_key(token)
+    valid_audiences = [_CLIENT_ID, f"api://{_CLIENT_ID}"] if _CLIENT_ID else None
     payload = jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
-        audience=_CLIENT_ID,
-        options={"require": ["exp", "iat"], "verify_aud": True},
+        audience=valid_audiences,
+        options={"require": ["exp", "iat"], "verify_aud": bool(valid_audiences)},
     )
     issuer = payload.get("iss", "")
-    if issuer not in _VALID_ISSUERS:
+    tid = payload.get("tid", "")
+    valid_issuers = {
+        f"https://login.microsoftonline.com/{_TENANT}/v2.0",
+        f"https://sts.windows.net/{_TENANT}/",
+        f"https://login.microsoftonline.com/{_TENANT}/",
+    }
+    if _TENANT and (issuer in valid_issuers or (tid and str(tid).lower() == str(_TENANT).lower())):
+        pass
+    elif not _TENANT:
+        pass
+    else:
         raise jwt.InvalidIssuerError(f"Untrusted issuer: {issuer}")
     return payload
 
 
 def _extract_email(payload: dict) -> str:
+    """Extracts the authenticated email address from an Entra ID or local JWT token claims payload."""
     return (
         payload.get("preferred_username")
         or payload.get("email")

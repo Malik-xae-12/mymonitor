@@ -1,3 +1,10 @@
+/**
+ * PipelineTeamsPage Component
+ * 
+ * Provides an administrative management interface for configuring L1 support leads,
+ * L2 escalation owners, and SLA warning/breach thresholds per pipeline in a selected workspace.
+ */
+
 import React, { useState, useEffect } from 'react';
 import { 
   GitFork, 
@@ -12,10 +19,16 @@ import {
   Database,
   ExternalLink
 } from 'lucide-react';
-import SlaConfigModal from '../../components/shared/SlaConfigModal';
-import WorkspaceSelector from '../../components/shared/WorkspaceSelector';
-import { listWorkspaces, getWorkspacePipelineAssignments } from './api';
+import SlaConfigModal from '../../../components/shared/SlaConfigModal';
+import WorkspaceSelector from '../../../components/shared/WorkspaceSelector';
+import { listWorkspaces, getWorkspacePipelineAssignments } from '../api';
 
+/**
+ * PipelineTeamsPage renders the table of pipelines with assigned L1/L2 teams and SLA thresholds.
+ *
+ * @param {Object} props
+ * @param {(workspaceId: string) => void} [props.onOpenTableConfig] Optional callback to open Lakehouse/Warehouse table config.
+ */
 export default function PipelineTeamsPage({ onOpenTableConfig }) {
   const [workspaces, setWorkspaces] = useState([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
@@ -42,7 +55,12 @@ export default function PipelineTeamsPage({ onOpenTableConfig }) {
     loadWorkspaces();
   }, []);
 
-  // 2. Fetch pipeline assignments for selected workspace
+  /**
+   * Fetches pipeline assignments for the given workspace ID.
+   *
+   * @param {string} wsId - Fabric workspace ID.
+   * @param {boolean} [forceSync=false] - Whether to bypass cache and sync directly from Fabric.
+   */
   const fetchPipelineAssignments = async (wsId, forceSync = false) => {
     if (!wsId) return;
     setIsLoading(true);

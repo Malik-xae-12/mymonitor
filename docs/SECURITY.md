@@ -1,42 +1,70 @@
-# Security Controls
+# Microsoft Fabric Monitoring Hub — Security Architecture & Threat Model
 
-**Last Updated:** 2026-09-23
+**Document Version:** 3.0  
+**Updated:** 2026-09-26  
+**Status:** Approved & Enforced  
 
 ---
 
-## 1. Secret Management
-- All credentials live in `.env` (root) — never committed. See `.env.example` for keys.
-- Secrets in use: Azure Service Principal (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
-  `AZURE_CLIENT_SECRET`), `GEMINI_API_KEY`, Gmail SMTP (`MAIL_USERNAME`, `MAIL_PASSWORD`).
-- Ensure `.env` is listed in `.gitignore`.
+## 1. Authentication Architecture
 
-## 2. Authentication & Authorization
-- **Microsoft Entra ID (Azure AD)** sign-in via MSAL (SPA). App registration:
-  client `25ad11d7-5885-4f0e-8424-919bf02e04eb`, tenant `008502d6-3f79-46f0-ab37-9354e3fe80ff`.
-- **Redirect URI** `http://localhost:3000` (dev) must be registered as a SPA redirect in Entra ID.
-- Backend validates the Entra ID **ID token** (audience = client id, issuer = tenant) using the
-  Entra **JWKS** endpoint (`PyJWT[crypto]`). Tokens are never trusted without signature + claim checks.
-- **RBAC**: `ADMIN_EMAILS` bootstrap admins; L1/L2 derived from `workspace_assignments`.
-  Admin-only routes guarded by `require_admin`; data scoped to assigned workspaces.
-- The Fabric Service Principal (`AZURE_CLIENT_SECRET`) is **backend-only** and never exposed
-  to the browser. It should hold least privilege (`Viewer`) on Fabric workspaces.
+The platform integrates enterprise single sign-on (SSO) with **Microsoft Entra ID (Azure Active Directory)**:
 
-## 3. Input Validation
-- All API request bodies validated via Pydantic V2 at the boundary (`app/models/`).
-- Guard against malformed Fabric / Gemini / SMTP responses (missing/typed fields).
+```
+[Browser Client] 
+       │ (1) Authenticate with Entra ID via MSAL (PKCE Flow)
+       ▼
+[Microsoft Entra ID] ──> Returns ID Token & Access Token
+       │
+       │ (2) HTTP Request with 'Authorization: Bearer <token>'
+       ▼
+[FastAPI Backend]
+       │ (3) Local JWT Signature Verification
+       ▼
+[In-Memory JWKS Cache] (Microsoft Public Keys, 24h TTL)
+```
 
-## 4. External Service Hardening
-- **Fabric REST**: throttled via `rate_limiter` (asyncio.Semaphore) to respect rate limits.
-- **Gmail SMTP**: STARTTLS on port 587, `VALIDATE_CERTS=True`. Use a Gmail App Password,
-  not the account password.
-- **Gemini**: only error text is sent for analysis; avoid sending secrets/PII in payloads.
+### Security Controls:
+1. **No Shared Passwords**: User passwords are never entered or stored in the application. Authentication delegates entirely to Microsoft Entra ID.
+2. **Stateless JWT Verification**: The backend validates tokens using Microsoft's JSON Web Key Set (`jwks_uri`). Keys are cached in memory for 24 hours to prevent network bottlenecks.
+3. **Audience & Tenant Scoping**: Tokens are verified against `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` to prevent cross-tenant token replay attacks.
 
-## 5. Data at Rest
-- SQLite DB (`backend/data/fabric_monitor.db`) stores run telemetry and cached diagnostics.
-  Protect the host filesystem; the DB may contain workspace/pipeline names and error text.
+---
 
-## 6. OWASP Considerations
-- Injection: parameterized SQLite queries only (no string-built SQL).
-- Sensitive data exposure: no secrets in logs, code, or client bundle.
-- Security misconfiguration: bind backend to `127.0.0.1` in dev; front it with a
-  hardened reverse proxy in production.
+## 2. Authorization & Role-Based Access Control (RBAC)
+
+The platform enforces the principle of least privilege across three roles:
+- **`admin` (Administrator)**: Unrestricted access to tenant workspaces, user directory, role assignment, and Delta table column mappings.
+- **`l1` (L1 Support Lead)**: Access strictly scoped to assigned workspaces and pipelines where designated as L1 contact. Administrative consoles and configuration modals are masked.
+- **`l2` (L2 Escalation Owner)**: Access strictly scoped to assigned workspaces and pipelines where designated as L2 escalation owner. Administrative controls are masked.
+
+### Server-Side Enforcement:
+Frontend visual masking is backed by server-side verification:
+- `users_service.resolve_access()` computes accessible workspace and pipeline IDs.
+- API route guards reject unpermitted workspace access with HTTP 403 Forbidden.
+
+---
+
+## 3. Database Security & SQL Injection Prevention
+
+### Zero Raw SQL Policy:
+- 100% of internal application persistence operates through **SQLAlchemy 2.0 Async ORM**.
+- All queries utilize SQLAlchemy expression constructs (`select()`, `update()`, `delete()`, `sqlite_upsert()`).
+- Direct string formatting or concatenation (`cursor.execute(f"SELECT * FROM ...")`) is **strictly prohibited**.
+- Parameter binding is automatically enforced by the underlying SQLite driver.
+
+---
+
+## 4. Network & Transport Security
+
+1. **Transport Layer Security (TLS)**: All production client-to-backend communication MUST use HTTPS and secure WebSockets (`wss://`).
+2. **SMTP Transport Security**: Automated incident alerts dispatch over SMTP using **STARTTLS** encryption on port 587 with credential authentication.
+3. **CORS Restrictions**: Cross-Origin Resource Sharing is locked down to designated frontend origin URLs in `app.core.config.settings.CORS_ORIGINS`.
+
+---
+
+## 5. Secret Management & Audit Logging
+
+1. **Environment Segregation**: Secrets (client secrets, SMTP passwords, Gemini API keys) are injected exclusively through environment variables and validated via Pydantic Settings.
+2. **Secret Redaction in Logs**: Log formatters redact Bearer tokens, passwords, and sensitive connection strings to prevent credential exposure in application traces.
+3. **Incident Audit Trail**: All incident resolutions log the resolver's identity (`resolved_by`) and timestamp (`resolved_at`) for compliance audits.

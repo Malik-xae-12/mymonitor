@@ -9,7 +9,8 @@ router = APIRouter(tags=["websockets"])
 
 @router.websocket("/ws/workspaces/{workspace_id}")
 async def workspace_websocket_endpoint(websocket: WebSocket, workspace_id: str):
-    from app.modules.pipelines.poller import leased_poller
+    """Handles real-time WebSocket connections for workspace telemetry and status broadcasts."""
+    from app.modules.pipelines.service import leased_poller
 
     await connection_manager.connect(workspace_id, websocket)
     try:

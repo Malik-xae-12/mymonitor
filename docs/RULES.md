@@ -1,46 +1,73 @@
-# AI Rulebook & Coding Standards
+# Microsoft Fabric Monitoring Hub — Coding Standards & Engineering Rules
 
-**Last Updated:** 2026-09-23
+**Document Version:** 3.0  
+**Updated:** 2026-09-26  
+**Status:** Mandatory Enforced  
 
-## 1. Architectural Boundaries
-- **Never** query SQLite outside `db_service.py`.
-- **Never** call Fabric REST outside `fabric_client.py` (routed through `rate_limiter`).
-- API routes/modules stay thin; business logic lives in `service.py` / `app/services/`.
-- The React UI talks to the backend only via `/api` and `/ws` (proxied by Vite in dev).
+---
 
-## 2. Auth & RBAC (must-follow)
-- Every non-public API depends on `get_current_user` (validated Entra ID token).
-- Admin-only endpoints depend on `require_admin`.
-- Workspace/pipeline data is **always** filtered by the caller's assigned workspaces
-  (admin bypasses). Never return unassigned workspaces to L1/L2.
-- Frontend routes are gated by MSAL auth + role (`RoleRoute`). No secrets in the SPA bundle.
+## 1. Core Architectural Invariants
 
-## 3. UI / Fabric Design (must-follow)
-- Build to the Microsoft Fabric UI kit (Fluent 2). Pull specs via Figma MCP when available.
-- Reuse `components/ui` + `components/layout`; do not hand-roll one-off styles per page.
-- Status must be conveyed by icon/label + color, never color alone.
-- Every page must be self-explanatory (see `docs/DESIGN.md` §6).
+### Rule 1.1: Zero Raw SQL Policy
+- **Requirement**: All database interactions with the local application database (`fabric_monitor.db`) MUST use **SQLAlchemy 2.0 Async ORM**.
+- **Prohibited**:
+  - `aiosqlite.connect(...)` or raw cursor queries.
+  - String concatenation in SQL statements (`cursor.execute(f"SELECT * FROM ...")`).
+  - `session.execute(text("SELECT ..."))` for internal application tables.
+- **Allowed**: `select()`, `update()`, `delete()`, `sqlite_upsert()`, and relationship loaders (`selectinload()`).
+- *Exception*: Remote Fabric Lakehouse/Warehouse queries executed over `pyodbc` T-SQL connection strings against external data endpoints.
 
-## 2. Code Style
-- **Python**: PEP 8, type hints, Pydantic V2 models for I/O boundaries, async/await for I/O.
-- **JavaScript/React**: functional components + hooks, no class components.
-- Keep changes surgical — do not refactor unrelated files.
+### Rule 1.2: Strict Modular Clean Architecture
+Every backend feature MUST adhere to the 4-layer structure:
+```
+router.py ──> service.py ──> repository.py ──> models/ & schema.py
+```
+- **Router**: Only path/query validation, dependency injection, and HTTP status codes. No business logic or ORM sessions.
+- **Service**: Business logic, domain rules, transaction coordination, external client calls (Fabric, SMTP, Gemini), and WebSocket broadcasting.
+- **Repository**: Pure SQLAlchemy ORM database queries, transactions, and upsert handling. No HTTP or external network calls.
+- **Models**: Declarative SQLAlchemy table models inheriting from `app.db.base.Base`.
+- **Schemas**: Pydantic V2 models for serialization, deserialization, and request validation.
 
-## 3. Input Validation & Safety
-- Validate all inbound request payloads with Pydantic at the API boundary.
-- Never trust Fabric/Gemini/SMTP responses blindly — guard against missing fields.
-- No secrets in code. All credentials come from `.env` (see `.env.example`).
+### Rule 1.3: Mandatory Concise Function Docstrings
+Every function, method, and class in both backend and frontend utility layers MUST contain a concise 1-line or 2-line docstring explaining its exact purpose:
+```python
+async def get_workspace_latest_tree(self, workspace_id: str) -> List[Dict[str, Any]]:
+    """Builds the latest execution hierarchy from SQLite cache, nesting sub-pipelines inside parent activities."""
+```
 
-## 4. Performance Invariants
-- Preserve differential polling: only re-query `InProgress` runs.
-- Respect `MAX_CONCURRENT_FABRIC_REQUESTS` (asyncio.Semaphore) to avoid HTTP 429.
-- Keep terminal-run and AI-diagnostic caches intact.
+### Rule 1.4: Zero Hardcoded Configuration
+- All secrets, tenant IDs, URLs, ports, and credentials MUST be loaded through `app.core.config.settings` (backed by Pydantic Settings and `.env`).
+- Never hardcode URLs (`http://localhost:8000`), workspace IDs, or tenant GUIDs in source code.
 
-## 5. Commit Hygiene
-- One atomic vertical slice per commit.
-- Run lint before commit: `npm run lint` (frontend), and keep backend importable.
-- Update `docs/TASKS.md` and `docs/MEMORY.md` after each completed slice.
+---
 
-## 6. Testing / Verification
-- Verify UI with Playwright MCP at localhost:3000 across the responsive matrix.
-- Confirm no console errors, failed network calls, or broken WebSocket on smoke test.
+## 2. Frontend Engineering Rules (React 18 + Vite)
+
+### Rule 2.1: Feature-Based Structure
+Code MUST be organized by domain under `src/features/` (`auth`, `monitoring`, `tableLogs`, `admin`, `users`). Shared components reside in `src/components/ui/` or `src/components/shared/`.
+
+### Rule 2.2: Strict State Hygiene
+- Never mutate state directly (`state.push(...)`). Always use immutable state update patterns (`[...prev, newItem]`).
+- Clean up all timers and WebSocket listeners in `useEffect` cleanup functions to eliminate memory leaks.
+
+### Rule 2.3: Zero Hardcoded API Endpoints
+All API calls must use `src/services/axiosClient.js` with centralized route definitions in `src/services/endpoints.js`.
+
+---
+
+## 3. Data Integrity & Concurrency Rules
+
+### Rule 3.1: SQLite WAL Mode
+The local database MUST always operate in Write-Ahead Logging (`PRAGMA journal_mode=WAL;`) with `busy_timeout=15000` to prevent database locks during concurrent WebSocket broadcasts and poller writes.
+
+### Rule 3.2: Leased Polling Lifecycle
+The background poller MUST check `connection_manager.get_active_workspace_ids()` before issuing API requests. If a workspace has 0 active WebSocket viewers, polling MUST be suspended.
+
+### Rule 3.3: Idempotent Incident Creation
+The alerting engine MUST verify that no active incident already exists for a `pipeline_run_id` before inserting a new record into `sla_incidents` to prevent duplicate email alerts.
+
+---
+
+## 4. Git & Commit Hygiene
+- Commit messages must follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`).
+- Never commit `.env`, credentials, or temporary SQLite database files to source control.

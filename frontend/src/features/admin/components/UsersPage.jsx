@@ -1,11 +1,25 @@
+/**
+ * UsersPage Component
+ * 
+ * Provides an administrative console for searching Entra ID (Azure AD) users
+ * using the Graph Service Principal and assigning them as L1 Support Leads
+ * or L2 Escalation Owners in the local repository.
+ */
+
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users, Search, Loader2, RefreshCw, ShieldCheck, AlertCircle, CheckCircle2,
   UserPlus, Trash2, Check
 } from 'lucide-react';
-import { listUsers, setUserRole, addUser, deleteUser } from './api/adminApi';
-import FabricPeoplePicker from '../../components/shared/FabricPeoplePicker';
+import { listUsers, setUserRole, addUser, deleteUser } from '../api/adminApi';
+import FabricPeoplePicker from '../../../components/shared/FabricPeoplePicker';
 
+/**
+ * Formats an ISO date string into a local readable representation.
+ *
+ * @param {string} iso - ISO date string.
+ * @returns {string} Formatted date string or fallback dash.
+ */
 function formatWhen(iso) {
   if (!iso) return '—';
   try {
@@ -15,6 +29,13 @@ function formatWhen(iso) {
   }
 }
 
+/**
+ * Derives persona monogram initials from a user's display name or email.
+ *
+ * @param {string} name - User's full display name.
+ * @param {string} email - User's corporate email.
+ * @returns {string} Two-letter uppercase monogram initials.
+ */
 function getPersonaInitials(name, email) {
   if (name) {
     const parts = name.trim().split(/\s+/);
@@ -48,6 +69,7 @@ export default function UsersPage() {
   const [savingEmail, setSavingEmail] = useState(null);
   const [deletingEmail, setDeletingEmail] = useState(null);
 
+  /** Loads all registered users from the backend admin API. */
   const load = async () => {
     setLoading(true);
     setStatus(null);
@@ -65,6 +87,7 @@ export default function UsersPage() {
     load();
   }, []);
 
+  /** Adds a selected Entra ID user to the local support team with the chosen role. */
   const handleAddUser = async () => {
     if (!selectedPerson || !selectedPerson.email) {
       setStatus({ type: 'err', msg: 'Please select a person from the directory first.' });
@@ -102,6 +125,12 @@ export default function UsersPage() {
     }
   };
 
+  /**
+   * Updates an existing support team member's role (l1 or l2).
+   *
+   * @param {string} email - User's email address.
+   * @param {string} roleId - Target role ('l1' or 'l2').
+   */
   const changeRole = async (email, roleId) => {
     setSavingEmail(email);
     setStatus(null);
@@ -119,6 +148,11 @@ export default function UsersPage() {
     }
   };
 
+  /**
+   * Deletes a non-admin support team member from the roster.
+   *
+   * @param {string} email - User's email address.
+   */
   const handleDeleteUser = async (email) => {
     if (!window.confirm(`Remove ${email} from the support roster?`)) return;
     setDeletingEmail(email);

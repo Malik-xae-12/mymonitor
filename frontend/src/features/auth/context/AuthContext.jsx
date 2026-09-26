@@ -61,6 +61,7 @@ export function AuthProvider({ children }) {
     role: profile?.role ?? 'none',
     isAdmin: !!profile?.is_admin,
     assignedWorkspaceIds: profile?.assigned_workspace_ids ?? [],
+    assignedPipelineIds: profile?.assigned_pipeline_ids ?? [],
     isAuthenticated: authEnabled ? isAuthenticated : true,
     loading,
     error,

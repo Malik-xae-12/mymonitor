@@ -1,4 +1,3 @@
-from app.modules.workspaces.models.workspace import Workspace
-from app.modules.workspaces.models.assignment import WorkspaceAssignment
-
-__all__ = ["Workspace", "WorkspaceAssignment"]
+# Workspace models package — legacy tables removed.
+# Workspace listing is a live Fabric API call.
+# L1/L2 assignments are now in sla_configs (pipeline-level).

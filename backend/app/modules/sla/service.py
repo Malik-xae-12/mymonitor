@@ -242,7 +242,17 @@ Dispatched from Microsoft Fabric Real-Time Hub
         })
 
     async def _sla_monitor_loop(self) -> None:
-        """Periodically check for SLA breaches on active incidents and dispatch L2 escalations."""
+        """Periodically check for SLA breaches on active incidents.
+        
+        Escalation flow:
+          ACTIVE → SLA1 timer expires → ESCALATED_L2 (email L2)
+          ESCALATED_L2 → SLA2 timer expires → CRITICAL_UNRESOLVED (email both L1+L2)
+          CRITICAL_UNRESOLVED → repeat CRITICAL email every 30 min until resolved
+        """
+        # Track when last critical reminder was sent per incident
+        _last_critical_reminder: dict[str, float] = {}
+        CRITICAL_REMINDER_INTERVAL_SEC = 30 * 60  # 30 minutes
+
         while self._is_running:
             try:
                 await asyncio.sleep(5.0)
@@ -250,8 +260,12 @@ Dispatched from Microsoft Fabric Real-Time Hub
                 now_utc = datetime.datetime.now(datetime.timezone.utc)
 
                 for inc in active_incidents:
-                    if inc.get("status") != "ACTIVE":
-                        continue
+                    inc_status = inc.get("status")
+                    inc_id = inc["id"]
+                    p_id = inc["pipeline_id"]
+                    p_name = inc["pipeline_name"]
+                    ws_id = inc["workspace_id"]
+                    run_id = inc["pipeline_run_id"]
 
                     sla_target_str = inc.get("sla_target_time")
                     if not sla_target_str:
@@ -265,20 +279,30 @@ Dispatched from Microsoft Fabric Real-Time Hub
                     except Exception:
                         continue
 
-                    if now_utc >= target_dt:
-                        inc_id = inc["id"]
-                        p_id = inc["pipeline_id"]
-                        p_name = inc["pipeline_name"]
-                        ws_id = inc["workspace_id"]
-                        run_id = inc["pipeline_run_id"]
-                        
+                    sla_cfg = await sla_repository.get_sla_config(ws_id, p_id)
+                    sla1_min = sla_cfg.get("sla1Minutes", 30)
+                    sla2_min = sla_cfg.get("sla2Minutes", 60)
+                    l1_email = sla_cfg.get("l1Email") or settings.MAIL_FROM or settings.MAIL_USERNAME
+                    l2_email = sla_cfg.get("l2Email") or settings.MAIL_FROM or settings.MAIL_USERNAME
+
+                    # Parse failed_at for SLA2 calculation
+                    failed_at_str = inc.get("failed_at") or sla_target_str
+                    try:
+                        failed_dt = datetime.datetime.fromisoformat(failed_at_str.replace("Z", "+00:00"))
+                        if failed_dt.tzinfo is None:
+                            failed_dt = failed_dt.replace(tzinfo=datetime.timezone.utc)
+                    except Exception:
+                        failed_dt = target_dt
+
+                    # SLA2 target = failed_at + sla2_minutes
+                    sla2_target_dt = failed_dt + datetime.timedelta(minutes=sla2_min)
+
+                    # ---- ACTIVE → ESCALATED_L2 (SLA1 breach) ----
+                    if inc_status == "ACTIVE" and now_utc >= target_dt:
                         overdue_seconds = int((now_utc - target_dt).total_seconds())
                         overdue_min = overdue_seconds // 60
 
-                        logger.warning(f"SLA BREACHED for incident {inc_id} ({p_name}). Overdue by {overdue_min}m. Escalating to L2!")
-
-                        sla_cfg = await sla_repository.get_sla_config(ws_id, p_id)
-                        l2_email = sla_cfg.get("l2Email") or settings.MAIL_FROM or settings.MAIL_USERNAME
+                        logger.warning(f"SLA1 BREACHED for incident {inc_id} ({p_name}). Overdue by {overdue_min}m. Escalating to L2!")
 
                         subject = f"[URGENT L2 ESCALATION - SLA BREACHED] {p_name} is +{overdue_min}m Overdue!"
                         plain_body = f"""
@@ -288,74 +312,20 @@ Pipeline: {p_name}
 Run ID: {run_id}
 Workspace ID: {ws_id}
 Failure Time: {inc.get('failed_at')}
-SLA Target Was: {sla_target_str}
+SLA1 Target Was: {sla_target_str}
+SLA2 Target: {sla2_target_dt.isoformat()} ({sla2_min}m from failure)
 Breach Overdue Time: +{overdue_min} minutes
 Error Summary: {inc.get('error_message')}
 
-This incident has exceeded its SLA resolution window without resolution.
+This incident has exceeded its SLA1 resolution window without resolution.
+If not resolved before SLA2 ({sla2_min}m), CRITICAL alerts will fire to both L1 and L2.
 Immediate L2 lead intervention is required!
                         """.strip()
 
-                        html_body = f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #e2e8f0; margin: 0; padding: 24px; }}
-  .card {{ max-width: 600px; margin: 0 auto; background: #1c0a0a; border: 2px solid #ef4444; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3); }}
-  .header {{ border-bottom: 1px solid #7f1d1d; padding-bottom: 16px; margin-bottom: 20px; }}
-  .badge {{ display: inline-block; background: #dc2626; color: #ffffff; font-weight: bold; font-size: 11px; text-transform: uppercase; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.5px; animation: pulse 2s infinite; }}
-  .title {{ font-size: 20px; font-weight: 700; color: #fca5a5; margin: 12px 0 4px; }}
-  .sub {{ font-family: monospace; font-size: 12px; color: #94a3b8; }}
-  .overdue {{ background: #7f1d1d; color: #fecaca; padding: 8px 12px; border-radius: 6px; font-weight: 700; font-size: 14px; margin-top: 12px; display: inline-block; }}
-  .field {{ margin-bottom: 16px; }}
-  .label {{ font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 600; margin-bottom: 4px; }}
-  .val {{ font-size: 14px; color: #e2e8f0; font-family: monospace; }}
-  .error-box {{ background: rgba(0, 0, 0, 0.4); border: 1px solid #991b1b; border-radius: 8px; padding: 12px; color: #fca5a5; font-size: 13px; line-height: 1.5; }}
-  .btn {{ display: inline-block; background: #ef4444; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 13px; font-weight: 700; margin-top: 16px; }}
-  .footer {{ margin-top: 24px; padding-top: 16px; border-top: 1px solid #7f1d1d; font-size: 11px; color: #94a3b8; text-align: center; }}
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="header">
-      <span class="badge">L2 Escalation • SLA Breached</span>
-      <h2 class="title">{p_name}</h2>
-      <div class="sub">Run ID: {run_id}</div>
-      <div class="overdue">
-        ⚠️ SLA Breach Overdue by: +{overdue_min}m {overdue_seconds % 60}s
-      </div>
-    </div>
-
-    <div class="field">
-      <div class="label">Failure Timestamp (UTC)</div>
-      <div class="val">{inc.get('failed_at')}</div>
-    </div>
-
-    <div class="field">
-      <div class="label">Target SLA Time</div>
-      <div class="val" style="color: #f87171; font-weight: bold;">{sla_target_str} (BREACHED)</div>
-    </div>
-
-    <div class="field">
-      <div class="label">Error Diagnostics</div>
-      <div class="error-box">
-        {inc.get('error_message') or 'Pipeline execution failed.'}
-      </div>
-    </div>
-
-    <div style="text-align: center;">
-      <a href="{settings.FRONTEND_URL}" class="btn">Take Action in Monitoring Dashboard</a>
-    </div>
-
-    <div class="footer">
-      Microsoft Fabric Real-Time Monitoring Hub • Automated L2 Escalation System
-    </div>
-  </div>
-</body>
-</html>
-                        """.strip()
+                        html_body = self._build_l2_escalation_html(
+                            p_name, run_id, ws_id, inc, sla_target_str, overdue_min, overdue_seconds,
+                            sla2_target_dt.isoformat(), sla2_min,
+                        )
 
                         await self.send_email(l2_email, subject, html_body, plain_body)
 
@@ -375,10 +345,216 @@ Immediate L2 lead intervention is required!
                             "l2EscalatedAt": now_str
                         })
 
+                    # ---- ESCALATED_L2 → CRITICAL_UNRESOLVED (SLA2 breach) ----
+                    elif inc_status == "ESCALATED_L2" and now_utc >= sla2_target_dt:
+                        overdue_seconds = int((now_utc - sla2_target_dt).total_seconds())
+                        overdue_min = overdue_seconds // 60
+
+                        logger.critical(f"SLA2 BREACHED for incident {inc_id} ({p_name}). SLA2 overdue by {overdue_min}m. CRITICAL_UNRESOLVED!")
+
+                        subject = f"[🚨 CRITICAL - SLA2 BREACHED] {p_name} UNRESOLVED for +{overdue_min}m past SLA2!"
+                        both_emails = ",".join(filter(None, {l1_email, l2_email}))
+                        plain_body = f"""
+🚨 CRITICAL UNRESOLVED - BOTH SLA1 AND SLA2 BREACHED
+============================================================
+Pipeline: {p_name}
+Run ID: {run_id}
+Workspace ID: {ws_id}
+Failure Time: {inc.get('failed_at')}
+SLA1 Target Was: {sla_target_str} (BREACHED)
+SLA2 Target Was: {sla2_target_dt.isoformat()} (BREACHED)
+SLA2 Overdue By: +{overdue_min} minutes
+Error Summary: {inc.get('error_message')}
+
+BOTH SLA thresholds have been exceeded. This incident is now CRITICAL.
+Reminder emails will repeat every 30 minutes until manually resolved.
+IMMEDIATE ACTION REQUIRED by L1 and L2 leads!
+                        """.strip()
+
+                        html_body = self._build_critical_html(
+                            p_name, run_id, ws_id, inc, sla_target_str,
+                            sla2_target_dt.isoformat(), overdue_min, overdue_seconds,
+                        )
+
+                        await self.send_email(both_emails, subject, html_body, plain_body)
+
+                        now_str = now_utc.isoformat()
+                        await sla_repository.update_incident(inc_id, {
+                            "status": "CRITICAL_UNRESOLVED",
+                            "updated_at": now_str
+                        })
+                        _last_critical_reminder[inc_id] = now_utc.timestamp()
+
+                        await connection_manager.broadcast_to_workspace(ws_id, {
+                            "type": "SLA2_BREACHED",
+                            "workspaceId": ws_id,
+                            "incidentId": inc_id,
+                            "pipelineId": p_id,
+                            "status": "CRITICAL_UNRESOLVED",
+                        })
+
+                    # ---- CRITICAL_UNRESOLVED → repeat reminder every 30 min ----
+                    elif inc_status == "CRITICAL_UNRESOLVED":
+                        last_sent = _last_critical_reminder.get(inc_id, 0)
+                        if (now_utc.timestamp() - last_sent) >= CRITICAL_REMINDER_INTERVAL_SEC:
+                            total_overdue_min = int((now_utc - failed_dt).total_seconds()) // 60
+
+                            logger.critical(f"CRITICAL REMINDER for incident {inc_id} ({p_name}). Total overdue: {total_overdue_min}m.")
+
+                            subject = f"[🚨 REMINDER - CRITICAL UNRESOLVED] {p_name} still unresolved after {total_overdue_min}m!"
+                            both_emails = ",".join(filter(None, {l1_email, l2_email}))
+                            plain_body = f"""
+🚨 CRITICAL REMINDER - INCIDENT STILL UNRESOLVED
+============================================================
+Pipeline: {p_name}
+Run ID: {run_id}
+Workspace ID: {ws_id}
+Total Time Since Failure: {total_overdue_min} minutes
+Error Summary: {inc.get('error_message')}
+
+This incident remains CRITICAL and unresolved.
+This is an automated reminder sent every 30 minutes.
+                            """.strip()
+
+                            html_body = self._build_critical_html(
+                                p_name, run_id, ws_id, inc, sla_target_str,
+                                sla2_target_dt.isoformat(), total_overdue_min,
+                                int((now_utc - failed_dt).total_seconds()),
+                            )
+
+                            await self.send_email(both_emails, subject, html_body, plain_body)
+                            _last_critical_reminder[inc_id] = now_utc.timestamp()
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in SLA monitor loop: {e}", exc_info=True)
+
+    def _build_l2_escalation_html(self, p_name, run_id, ws_id, inc, sla_target_str, overdue_min, overdue_seconds, sla2_target, sla2_min):
+        """Build HTML email body for L2 escalation alert."""
+        return f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #e2e8f0; margin: 0; padding: 24px; }}
+  .card {{ max-width: 600px; margin: 0 auto; background: #1c0a0a; border: 2px solid #ef4444; border-radius: 12px; padding: 24px; box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3); }}
+  .header {{ border-bottom: 1px solid #7f1d1d; padding-bottom: 16px; margin-bottom: 20px; }}
+  .badge {{ display: inline-block; background: #dc2626; color: #ffffff; font-weight: bold; font-size: 11px; text-transform: uppercase; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.5px; }}
+  .title {{ font-size: 20px; font-weight: 700; color: #fca5a5; margin: 12px 0 4px; }}
+  .sub {{ font-family: monospace; font-size: 12px; color: #94a3b8; }}
+  .overdue {{ background: #7f1d1d; color: #fecaca; padding: 8px 12px; border-radius: 6px; font-weight: 700; font-size: 14px; margin-top: 12px; display: inline-block; }}
+  .field {{ margin-bottom: 16px; }}
+  .label {{ font-size: 11px; text-transform: uppercase; color: #94a3b8; font-weight: 600; margin-bottom: 4px; }}
+  .val {{ font-size: 14px; color: #e2e8f0; font-family: monospace; }}
+  .error-box {{ background: rgba(0, 0, 0, 0.4); border: 1px solid #991b1b; border-radius: 8px; padding: 12px; color: #fca5a5; font-size: 13px; line-height: 1.5; }}
+  .btn {{ display: inline-block; background: #ef4444; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 13px; font-weight: 700; margin-top: 16px; }}
+  .footer {{ margin-top: 24px; padding-top: 16px; border-top: 1px solid #7f1d1d; font-size: 11px; color: #94a3b8; text-align: center; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <span class="badge">L2 Escalation &bull; SLA1 Breached</span>
+      <h2 class="title">{p_name}</h2>
+      <div class="sub">Run ID: {run_id}</div>
+      <div class="overdue">
+        ⚠️ SLA1 Overdue by: +{overdue_min}m {overdue_seconds % 60}s
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Failure Timestamp (UTC)</div>
+      <div class="val">{inc.get('failed_at')}</div>
+    </div>
+    <div class="field">
+      <div class="label">SLA1 Target</div>
+      <div class="val" style="color: #f87171; font-weight: bold;">{sla_target_str} (BREACHED)</div>
+    </div>
+    <div class="field">
+      <div class="label">SLA2 Target (next escalation)</div>
+      <div class="val" style="color: #fbbf24;">{sla2_target} ({sla2_min}m from failure)</div>
+    </div>
+    <div class="field">
+      <div class="label">Error Diagnostics</div>
+      <div class="error-box">
+        {inc.get('error_message') or 'Pipeline execution failed.'}
+      </div>
+    </div>
+    <div style="text-align: center;">
+      <a href="{settings.FRONTEND_URL}" class="btn">Take Action in Monitoring Dashboard</a>
+    </div>
+    <div class="footer">
+      Microsoft Fabric Real-Time Monitoring Hub &bull; Automated L2 Escalation<br/>
+      If not resolved before SLA2 target, CRITICAL alerts will notify both L1 and L2.
+    </div>
+  </div>
+</body>
+</html>
+        """.strip()
+
+    def _build_critical_html(self, p_name, run_id, ws_id, inc, sla1_target, sla2_target, overdue_min, overdue_seconds):
+        """Build HTML email body for CRITICAL_UNRESOLVED alert (both SLAs breached)."""
+        return f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0000; color: #e2e8f0; margin: 0; padding: 24px; }}
+  .card {{ max-width: 600px; margin: 0 auto; background: #1a0000; border: 3px solid #ff0000; border-radius: 12px; padding: 24px; box-shadow: 0 10px 40px rgba(255, 0, 0, 0.4); }}
+  .header {{ border-bottom: 2px solid #cc0000; padding-bottom: 16px; margin-bottom: 20px; }}
+  .badge {{ display: inline-block; background: #ff0000; color: #ffffff; font-weight: bold; font-size: 12px; text-transform: uppercase; padding: 6px 14px; border-radius: 6px; letter-spacing: 1px; }}
+  .title {{ font-size: 22px; font-weight: 800; color: #ff6666; margin: 12px 0 4px; }}
+  .sub {{ font-family: monospace; font-size: 12px; color: #94a3b8; }}
+  .overdue {{ background: #cc0000; color: #ffffff; padding: 10px 16px; border-radius: 8px; font-weight: 800; font-size: 16px; margin-top: 12px; display: inline-block; }}
+  .field {{ margin-bottom: 16px; }}
+  .label {{ font-size: 11px; text-transform: uppercase; color: #ff9999; font-weight: 600; margin-bottom: 4px; }}
+  .val {{ font-size: 14px; color: #e2e8f0; font-family: monospace; }}
+  .error-box {{ background: rgba(0, 0, 0, 0.5); border: 2px solid #ff0000; border-radius: 8px; padding: 12px; color: #ff9999; font-size: 13px; line-height: 1.5; }}
+  .btn {{ display: inline-block; background: #ff0000; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-size: 14px; font-weight: 800; margin-top: 16px; text-transform: uppercase; }}
+  .footer {{ margin-top: 24px; padding-top: 16px; border-top: 2px solid #cc0000; font-size: 11px; color: #ff9999; text-align: center; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <span class="badge">🚨 CRITICAL &bull; SLA1 + SLA2 BREACHED</span>
+      <h2 class="title">{p_name}</h2>
+      <div class="sub">Run ID: {run_id}</div>
+      <div class="overdue">
+        🚨 Total Overdue: +{overdue_min}m {overdue_seconds % 60}s
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Failure Timestamp (UTC)</div>
+      <div class="val">{inc.get('failed_at')}</div>
+    </div>
+    <div class="field">
+      <div class="label">SLA1 Target</div>
+      <div class="val" style="color: #ff6666; font-weight: bold;">{sla1_target} (BREACHED)</div>
+    </div>
+    <div class="field">
+      <div class="label">SLA2 Target</div>
+      <div class="val" style="color: #ff0000; font-weight: bold;">{sla2_target} (BREACHED)</div>
+    </div>
+    <div class="field">
+      <div class="label">Error Diagnostics</div>
+      <div class="error-box">
+        {inc.get('error_message') or 'Pipeline execution failed.'}
+      </div>
+    </div>
+    <div style="text-align: center;">
+      <a href="{settings.FRONTEND_URL}" class="btn">🚨 RESOLVE NOW</a>
+    </div>
+    <div class="footer">
+      Microsoft Fabric Real-Time Monitoring Hub &bull; CRITICAL Escalation System<br/>
+      This alert repeats every 30 minutes until the incident is manually resolved.
+    </div>
+  </div>
+</body>
+</html>
+        """.strip()
 
     async def resolve_incident(self, incident_id: str, resolved_by: str = "User") -> Optional[Dict[str, Any]]:
         """Acknowledge and mark an SLA failure incident as resolved."""
@@ -594,7 +770,7 @@ class SlaService:
         """Retrieve SLA configuration and email assignees for a pipeline."""
         return await sla_repository.get_sla_config(workspace_id, pipeline_id)
 
-    async def save_sla_config(self, workspace_id: str, pipeline_id: str, payload: SlaConfigPayload) -> Dict[str, Any]:
+    async def save_sla_config(self, workspace_id: str, pipeline_id: str, payload: SlaConfigPayload, assigned_by: str = "") -> Dict[str, Any]:
         """Save SLA 1 and SLA 2 thresholds and assignee contact details for a pipeline."""
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         sla1 = payload.sla1Minutes if payload.sla1Minutes is not None else (payload.slaMinutes or DEFAULT_SLA1_MINUTES)
@@ -603,6 +779,7 @@ class SlaService:
         l2_email = (payload.l2Email or "").strip()
         l1_name = (payload.l1Name or "").strip()
         l2_name = (payload.l2Name or "").strip()
+        pipeline_name = (payload.pipelineName or "").strip()
 
         await sla_repository.save_sla_config(
             workspace_id=workspace_id,
@@ -615,6 +792,8 @@ class SlaService:
             updated_at=now_iso,
             sla1_minutes=sla1,
             sla2_minutes=sla2,
+            pipeline_name=pipeline_name,
+            assigned_by=assigned_by,
         )
 
         try:

@@ -247,7 +247,7 @@ The platform enforces strict role-based access control across both the backend A
 
 ---
 
-## 7. Automated Alerting & Two-Tier SLA Escalation Engine
+## 7. Automated Alerting & Multi-Tier SLA Escalation Engine
 
 ```mermaid
 stateDiagram-v2
@@ -263,14 +263,25 @@ stateDiagram-v2
 
     state WatchdogCountdown {
         [*] --> Checking: Compare now_utc >= sla_target_time
-        Checking --> Resolved: Operator Clicks 'Resolve Incident'
+        Checking --> Resolved: Operator Clicks 'Resolve'
         Checking --> EscalatedL2: Time Elapsed >= SLA1 Minutes
     }
 
     state EscalatedL2 {
         [*] --> L2Notified: Update status = ESCALATED_L2 & Send L2 Alert Email
         L2Notified --> BreachedBroadcast: Broadcast SLA_BREACHED over WebSocket
-        BreachedBroadcast --> Resolved: Lead Operator Resolves Incident
+        BreachedBroadcast --> SLA2Checking: Evaluate SLA2 Threshold
+        SLA2Checking --> CriticalUnresolved: Time Elapsed >= SLA2 Minutes
+        SLA2Checking --> Resolved: Lead Operator Resolves Incident
+    }
+
+    state CriticalUnresolved {
+        [*] --> CriticalAlert: Update status = CRITICAL_UNRESOLVED
+        CriticalAlert --> DualEmail: Send Urgent Alert to Both L1 + L2 Leads
+        DualEmail --> BroadcastSLA2: Broadcast SLA2_BREACHED over WebSocket
+        BroadcastSLA2 --> RecurringReminder: Repeat Reminder Every 30 Minutes
+        RecurringReminder --> RecurringReminder: Still Unresolved
+        RecurringReminder --> Resolved: Lead Operator Resolves Incident
     }
 
     Resolved --> [*]: Archive Incident
@@ -293,26 +304,26 @@ stateDiagram-v2
    - Deep link to the Monitoring Dashboard.
 5. Records `l1_notified_at = now` and broadcasts an `INCIDENT_CREATED` WebSocket message to all active operators.
 
-### 7.2 SLA Watchdog Loop & Automatic L2 Escalation
+### 7.2 SLA Watchdog Loop, L2 Escalation & SLA2 Critical Breach
 1. `AlertService._sla_monitor_loop` runs as an asynchronous background task, evaluating unresolved incidents every 5 seconds.
-2. For each active incident, parses `sla_target_time` against current UTC time.
-3. If `now_utc >= sla_target_time`:
-   - Calculates the overdue duration (`overdue_min = overdue_seconds // 60`).
-   - Retrieves the configured `l2_email` from `sla_configs`.
-   - Sends an urgent escalation HTML email to `l2_email` marked with a pulsating red alert badge and overdue duration counter.
-   - Updates the incident record in SQLite:
-     ```python
-     await sla_repository.update_incident(incident_id, {
-         "status": "ESCALATED_L2",
-         "l2_escalated_at": now_str,
-         "updated_at": now_str,
-     })
-     ```
-   - Broadcasts an `SLA_BREACHED` WebSocket notification with a red warning banner across the platform.
+2. For each active incident, evaluates two distinct SLA thresholds:
+   - **SLA1 Threshold (`target_dt = failed_dt + sla1_min`)**:
+     - When `inc_status == "ACTIVE"` and `now_utc >= target_dt`:
+       - Calculates overdue minutes (`overdue_min = overdue_seconds // 60`).
+       - Sends an urgent escalation HTML email to `l2_email` with an overdue duration counter.
+       - Updates status to `ESCALATED_L2` and records `l2_escalated_at`.
+       - Broadcasts `SLA_BREACHED` over WebSockets.
+   - **SLA2 Threshold (`sla2_target_dt = failed_dt + sla2_min`)**:
+     - When `inc_status == "ESCALATED_L2"` and `now_utc >= sla2_target_dt`:
+       - Calculates overdue minutes past SLA2.
+       - Transitions incident status to `CRITICAL_UNRESOLVED`.
+       - Sends an urgent escalation alert email with subject `[🚨 CRITICAL - SLA2 BREACHED]` to **both L1 and L2 leads**.
+       - Broadcasts `SLA2_BREACHED` over WebSockets.
+       - Schedules automated reminder alerts sent to both leads every **30 minutes** until manually acknowledged and resolved.
 
 ### 7.3 Incident Resolution
 Operators can acknowledge and clear incidents directly from the UI:
-- Invokes `POST /api/sla/incidents/{id}/resolve`.
+- Invokes `POST /api/workspaces/incidents/{id}/resolve`.
 - Sets `status = 'RESOLVED'`, `resolved_at = now`, and `resolved_by = operator_email`.
 - Broadcasts `INCIDENT_RESOLVED` over WebSockets, resetting the UI alert state.
 
@@ -370,13 +381,12 @@ When a pipeline or inner activity fails, operators can trigger AI-assisted root-
 
 ## 11. Database Schema & SQLAlchemy ORM Models
 
-The database uses SQLite in Write-Ahead Logging (WAL) mode managed by SQLAlchemy 2.0 Async ORM:
+The database uses SQLite in Write-Ahead Logging (WAL) mode managed by SQLAlchemy 2.0 Async ORM. To ensure consistency and eliminate redundancy, workspaces are retrieved live from Microsoft Fabric via REST API, and support assignments are unified directly into `sla_configs`:
 
 ```mermaid
 erDiagram
-    Workspace ||--o{ Pipeline : contains
-    Workspace ||--o| WorkspaceAssignment : assigned
-    Workspace ||--o| TableLogMapping : maps
+    FabricWorkspace ||--o{ Pipeline : contains
+    FabricWorkspace ||--o| TableLogMapping : maps
     Pipeline ||--o{ PipelineRun : executes
     Pipeline ||--o{ PipelineSchedule : scheduled
     Pipeline ||--o| SLAConfig : configured
@@ -386,19 +396,21 @@ erDiagram
 ```
 
 ### Table Definitions:
-1. **`workspaces`**: `id` (PK), `displayName`, `last_polled_at`.
-2. **`workspace_assignments`**: `workspace_id` (PK), `workspace_name`, `l1_email`, `l2_email`, `sla1_minutes`, `sla2_minutes`, `table_config_done`, `assigned_by`, `updated_at`.
-3. **`pipelines`**: `id` (PK), `workspace_id` (FK), `displayName`, `is_master`, `prefix`, `updated_at`.
-4. **`pipeline_runs`**: `id` (PK), `pipeline_id` (FK), `workspace_id` (FK), `pipeline_name`, `status`, `start_time`, `end_time`, `duration_in_ms`, `invoke_type`, `is_child`, `parent_run_id`, `parent_activity_name`, `failure_reason`, `updated_at`.
+1. **`sla_configs`** *(Unified Single Source of Truth for SLA & L1/L2 Support)*: `pipeline_id` (PK), `workspace_id` (Indexed), `pipeline_name`, `l1_email`, `l2_email`, `l1_name`, `l2_name`, `sla_minutes`, `sla1_minutes`, `sla2_minutes`, `assigned_by`, `updated_at`.
+2. **`sla_incidents`**: `id` (PK), `pipeline_id` (FK), `pipeline_name`, `pipeline_run_id` (FK), `workspace_id` (FK), `status` (`ACTIVE`, `ESCALATED_L2`, `CRITICAL_UNRESOLVED`, `RESOLVED`), `failed_at`, `sla_target_time`, `l1_notified_at`, `l2_escalated_at`, `resolved_at`, `resolved_by`, `error_message`, `updated_at`.
+3. **`pipelines`**: `id` (PK), `workspace_id`, `displayName`, `is_master`, `prefix`, `updated_at`.
+4. **`pipeline_runs`**: `id` (PK), `pipeline_id` (FK), `workspace_id`, `pipeline_name`, `status`, `start_time`, `end_time`, `duration_in_ms`, `invoke_type`, `is_child`, `parent_run_id`, `parent_activity_name`, `failure_reason`, `updated_at`.
 5. **`activity_runs`**: `activity_run_id` (PK), `pipeline_run_id` (FK), `activity_name`, `activity_type`, `status`, `start_time`, `end_time`, `duration_in_ms`, `error`, `output`, `child_pipeline_run_id`, `child_pipeline_data`, `updated_at`.
-6. **`pipeline_schedules`**: `pipeline_id` (PK), `workspace_id` (FK), `pipeline_name`, `enabled`, `schedule_type`, `next_run_time`, `time_zone`, `raw_configuration`, `updated_at`.
-7. **`sla_configs`**: `pipeline_id` (PK), `workspace_id` (FK), `l1_email`, `l2_email`, `l1_name`, `l2_name`, `sla_minutes`, `sla1_minutes`, `sla2_minutes`, `updated_at`.
-8. **`sla_incidents`**: `id` (PK), `pipeline_id` (FK), `pipeline_name`, `pipeline_run_id` (FK), `workspace_id` (FK), `status`, `failed_at`, `sla_target_time`, `l1_notified_at`, `l2_escalated_at`, `resolved_at`, `resolved_by`, `error_message`, `updated_at`.
-9. **`table_log_mappings`**: `workspace_id` (PK), `artifact_type`, `artifact_id`, `artifact_name`, `server_fqdn`, `database_name`, `batch_header_schema`, `batch_header_table`, `batch_header_mapping`, `bronze_schema`, `bronze_table`, `bronze_mapping`, `silver_schema`, `silver_table`, `silver_mapping`, `updated_at`.
-10. **`ai_error_diagnostics`**: `error_hash` (PK), `error_code`, `error_message`, `activity_type`, `pipeline_name`, `diagnosis_json`, `created_at`.
-11. **`users`**: `id` (PK), `email` (Unique), `oid`, `display_name`, `role_id` (FK), `is_active`, `is_verified`, `last_login_at`, `created_at`.
-12. **`roles`**: `id` (PK), `name`, `description`, `created_at`.
-13. **`refresh_tokens`**: `id` (PK), `user_id` (FK), `token_hash`, `expires_at`, `revoked_at`, `created_at`.
+6. **`pipeline_schedules`**: `pipeline_id` (PK), `workspace_id`, `pipeline_name`, `enabled`, `schedule_type`, `next_run_time`, `time_zone`, `raw_configuration`, `updated_at`.
+7. **`table_log_mappings`**: `workspace_id` (PK), `artifact_type`, `artifact_id`, `artifact_name`, `server_fqdn`, `database_name`, `batch_header_schema`, `batch_header_table`, `batch_header_mapping`, `bronze_schema`, `bronze_table`, `bronze_mapping`, `silver_schema`, `silver_table`, `silver_mapping`, `updated_at`.
+8. **`ai_error_diagnostics`**: `error_hash` (PK), `error_code`, `error_message`, `activity_type`, `pipeline_name`, `diagnosis_json`, `created_at`.
+9. **`users`**: `id` (PK), `email` (Unique), `oid`, `display_name`, `role_id` (FK), `is_active`, `is_verified`, `last_login_at`, `created_at`.
+10. **`roles`**: `id` (PK), `name`, `description`, `created_at`.
+11. **`refresh_tokens`**: `id` (PK), `user_id` (FK), `token_hash`, `expires_at`, `revoked_at`, `created_at`.
+
+> **Note on Eliminated Redundant Tables**:
+> - The legacy `workspaces` table was removed because workspaces are discovered live via Fabric REST API (`/v1/workspaces`), ensuring instantaneous reflection of added/modified workspace permissions.
+> - The legacy `workspace_assignments` table was merged into `sla_configs` because L1/L2 responsibilities are defined at the granular parent pipeline level.
 
 ---
 

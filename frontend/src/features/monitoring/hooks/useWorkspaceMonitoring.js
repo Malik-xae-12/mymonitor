@@ -241,6 +241,21 @@ export function useWorkspaceMonitoring(
               return p;
             })
           );
+        } else if (message.type === 'SLA2_BREACHED') {
+          setPipelineTree((prev) =>
+            prev.map((p) => {
+              if (p.incident && p.incident.id === message.incidentId) {
+                return {
+                  ...p,
+                  incident: {
+                    ...p.incident,
+                    status: 'CRITICAL_UNRESOLVED',
+                  }
+                };
+              }
+              return p;
+            })
+          );
         } else if (message.type === 'INCIDENT_RESOLVED') {
           setPipelineTree((prev) =>
             prev.map((p) => {

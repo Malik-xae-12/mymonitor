@@ -71,29 +71,23 @@ class UserProfile(BaseModel):
     role: str = "none"  # admin | l1 | l2 | none
     is_admin: bool = False
     assigned_workspace_ids: List[str] = Field(default_factory=list)
+    assigned_pipeline_ids: List[str] = Field(default_factory=list)
 
 
-# ---- Workspace L1/L2 Support Team Assignment Schemas ----
-class WorkspaceAssignment(BaseModel):
-    workspace_id: str
-    workspace_name: Optional[str] = None
+# ---- Pipeline-level SLA Assignment Schemas ----
+class SlaAssignment(BaseModel):
+    """Represents an L1/L2 pipeline-level SLA assignment from sla_configs."""
+    pipeline_id: str
+    workspace_id: Optional[str] = None
+    pipeline_name: Optional[str] = None
     l1_email: Optional[str] = None
     l2_email: Optional[str] = None
+    l1_name: Optional[str] = None
+    l2_name: Optional[str] = None
     sla1_minutes: int = 30
     sla2_minutes: int = 60
-    table_config_done: bool = False
     assigned_by: Optional[str] = None
     updated_at: Optional[str] = None
-
-
-class AssignmentUpsertRequest(BaseModel):
-    workspace_id: str
-    workspace_name: Optional[str] = None
-    l1_email: Optional[str] = None
-    l2_email: Optional[str] = None
-    sla1_minutes: int = 30
-    sla2_minutes: int = 60
-    table_config_done: bool = False
 
 
 __all__ = [
@@ -106,6 +100,5 @@ __all__ = [
     "SetRoleRequest",
     "UsersListResponse",
     "UserProfile",
-    "WorkspaceAssignment",
-    "AssignmentUpsertRequest",
+    "SlaAssignment",
 ]

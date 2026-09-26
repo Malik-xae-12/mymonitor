@@ -35,10 +35,10 @@ The **Microsoft Fabric Real-Time Monitoring Hub** has successfully completed ful
 
 ## 3. Verified System Capabilities
 
-### 3.1 Dynamic Workspaces & Role Scoping
-- Automatic synchronization of Fabric workspaces into SQLite.
-- Role-scoped workspace visibility: Admin sees all; L1/L2 see only assigned workspaces.
-- <15ms retrieval of workspace lists from local cache.
+### 3.1 Live Workspace Discovery & Granular Pipeline Scoping
+- Live Fabric REST API queries: workspaces are fetched directly from `/v1/workspaces`, eliminating stale local database cache and removing the redundant `workspaces` table.
+- Role-scoped workspace visibility: Admin sees all workspaces; L1 and L2 support engineers only see workspaces where they have at least one assigned pipeline.
+- Pipeline-level RBAC scoping: Non-admin users strictly see **only their assigned pipelines** (`assigned_pipeline_ids`) within accessible workspaces, enforcing strict least-privilege visibility.
 
 ### 3.2 Hierarchical Pipeline Trees
 - Master pipelines (`is_master = 1`) render at root level.
@@ -53,12 +53,13 @@ The **Microsoft Fabric Real-Time Monitoring Hub** has successfully completed ful
 - Permanent caching of terminal runs in SQLite.
 - Re-run detection: new GUID instances immediately bypass cache and show InProgress.
 
-### 3.4 Two-Tier SLA Alerting & Escalation
-- SLA1 (L1 window) and SLA2 (L2 window) thresholds per pipeline.
-- Failure triggers instant incident creation and rich HTML L1 alert email.
-- Watchdog loop evaluates incidents every 5 seconds.
-- Breach of SLA1 triggers automatic status change to `ESCALATED_L2` and urgent L2 email dispatch.
-- Operator resolution clears incident state and broadcasts over WebSockets.
+### 3.4 Multi-Tier SLA Alerting & Critical Escalation
+- Unified `sla_configs` table (`pipeline_id` PK): single source of truth for pipeline display name, L1/L2 assignees, and SLA1/SLA2 threshold minutes.
+- **Tier 1 (Failure)**: Failure triggers instant incident creation (`ACTIVE`) and rich HTML L1 alert email.
+- **Tier 2 (SLA1 Breach)**: Watchdog loop evaluates incidents every 5 seconds. Breach of SLA1 triggers automatic status change to `ESCALATED_L2`, urgent L2 email dispatch, and `SLA_BREACHED` WS broadcast.
+- **Tier 3 (SLA2 Breach)**: Breach of SLA2 triggers automatic status change to `CRITICAL_UNRESOLVED`, urgent critical email dispatch to **both L1 and L2 leads**, and `SLA2_BREACHED` WS broadcast.
+- **Recurring Reminders**: Active `CRITICAL_UNRESOLVED` incidents trigger automated reminder emails sent to both leads every 30 minutes until manually acknowledged and resolved.
+- **Operator Resolution**: Clears incident state (`RESOLVED`), logs resolver and timestamp, and broadcasts `INCIDENT_RESOLVED` over WebSockets.
 
 ### 3.5 Multi-Schedule Management & Forecasting
 - Discovery of multiple triggers per pipeline.

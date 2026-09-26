@@ -5,8 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.users.schema import (
     UserProfile,
-    WorkspaceAssignment,
-    AssignmentUpsertRequest,
+    SlaAssignment,
 )
 
 
@@ -50,6 +49,5 @@ __all__ = [
     "TokenPairResponse",
     "RefreshRequest",
     "UserProfile",
-    "WorkspaceAssignment",
-    "AssignmentUpsertRequest",
+    "SlaAssignment",
 ]

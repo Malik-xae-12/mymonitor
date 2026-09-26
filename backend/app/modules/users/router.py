@@ -5,14 +5,13 @@ from app.modules.auth.dependency import get_current_user, require_admin
 from app.modules.auth.service import fastapi_users
 from app.modules.users.schema import (
     AddUserRequest,
-    AssignmentUpsertRequest,
     RoleResponse,
     SetRoleRequest,
+    SlaAssignment,
     UserProfile,
     UserRead,
     UserUpdate,
     UsersListResponse,
-    WorkspaceAssignment,
 )
 from app.modules.users.service import users_service
 
@@ -28,32 +27,13 @@ router.include_router(
 )
 
 
-# ---- Workspace L1/L2 Support Team Assignments ---------------------
-@router.get("/api/admin/assignments", response_model=List[WorkspaceAssignment])
+# ---- Pipeline-level SLA Assignments (read-only from users module) ----
+@router.get("/api/admin/assignments", response_model=List[SlaAssignment])
 async def list_assignments(
     _: UserProfile = Depends(require_admin),
-) -> List[WorkspaceAssignment]:
-    """Retrieve all workspace-to-support assignments."""
+) -> List[SlaAssignment]:
+    """Retrieve all pipeline-level SLA assignments across all workspaces."""
     return await users_service.list_all_assignments()
-
-
-@router.post("/api/admin/assignments", response_model=WorkspaceAssignment)
-async def upsert_assignment(
-    payload: AssignmentUpsertRequest,
-    admin: UserProfile = Depends(require_admin),
-) -> WorkspaceAssignment:
-    """Create or update assignment of L1/L2 teams and SLA targets for a workspace."""
-    return await users_service.upsert_assignment(payload, assigned_by=admin.email)
-
-
-@router.delete("/api/admin/assignments/{workspace_id}")
-async def delete_assignment(
-    workspace_id: str,
-    _: UserProfile = Depends(require_admin),
-) -> dict:
-    """Delete the support assignment for a specific workspace."""
-    await users_service.delete_assignment(workspace_id)
-    return {"success": True, "workspace_id": workspace_id}
 
 
 # ---- Users & Roles Management -----------------------------------

@@ -158,3 +158,38 @@ Consolidate `admin` and `users` into a unified `users` module (`backend/app/modu
 ### Consequences
 - **Pros**: Cleaner domain boundaries; reduced module fragmentation (9 cohesive modules instead of 10); single source of truth for user access and support assignments.
 - **Cons**: None; full URL route compatibility maintained for all frontend API calls.
+
+---
+
+## ADR-010: Elimination of `workspaces` Table and Merging of `workspace_assignments` into `sla_configs`
+
+### Context
+Maintaining a local `workspaces` table introduced unnecessary synchronization overhead: when new workspaces were granted to the Service Principal in Fabric, cached database records caused latency or required manual sync. Furthermore, having separate `workspace_assignments` and `sla_configs` tables led to overlapping and duplicated data (both stored L1/L2 emails and SLA thresholds).
+
+### Decision
+1. **Live Workspace Discovery**: Retrieve workspaces live from Microsoft Fabric via `/v1/workspaces`. The local `workspaces` table is deleted.
+2. **Consolidate into `sla_configs`**: Remove `workspace_assignments` and standardize on `sla_configs` (`pipeline_id` PK) as the sole source of truth for pipeline assignments, display names, L1/L2 contacts, and SLA thresholds.
+
+### Consequences
+- **Pros**: Zero cache staleness when Fabric workspace access changes; single source of truth for all support assignments; simpler database schema.
+- **Cons**: Slightly dependent on Fabric REST API response times for workspace listings (mitigated by HTTP client pooling and client-side caching in React).
+
+---
+
+## ADR-011: Three-Tier SLA Escalation (`CRITICAL_UNRESOLVED`) and Granular Pipeline-Level Scoping
+
+### Context
+Previously, when SLA1 expired, an incident transitioned to `ESCALATED_L2` and alerted the L2 engineer, but there was no further escalation if the failure remained unresolved past SLA2. Additionally, non-admin L1 and L2 engineers could see all pipelines in an assigned workspace rather than only the specific pipelines assigned to their responsibility.
+
+### Decision
+1. **Three-Tier SLA Escalation Engine**:
+   - `ACTIVE`: Pipeline fails, L1 alerted immediately.
+   - `ESCALATED_L2`: SLA1 expires without resolution, L2 lead alerted.
+   - `CRITICAL_UNRESOLVED`: SLA2 expires without resolution, urgent critical alert dispatched to **both L1 and L2 leads**, accompanied by an automated recurring reminder every 30 minutes until resolved.
+2. **Granular Pipeline-Level Scoping**:
+   - `users_service.resolve_access()` queries `sla_configs` to determine both `assigned_workspace_ids` and `assigned_pipeline_ids`.
+   - The frontend `scopedPipelineTree` filters the pipeline tree so that non-admin engineers strictly see their assigned pipelines within workspaces.
+
+### Consequences
+- **Pros**: Complete escalation lifecycle preventing unmonitored breaches; guaranteed operational attention for critical outages; strict least-privilege visibility for operational support staff.
+- **Cons**: Requires active SMTP infrastructure to deliver recurring critical reminders.

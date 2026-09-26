@@ -16,7 +16,8 @@ async def get_pipeline_sla_config(workspace_id: str, pipeline_id: str):
 @router.post("/{workspace_id}/pipelines/{pipeline_id}/sla")
 async def save_pipeline_sla_config(workspace_id: str, pipeline_id: str, payload: SlaConfigPayload):
     """Save or update SLA 1 & SLA 2 configuration for a pipeline."""
-    return await sla_service.save_sla_config(workspace_id, pipeline_id, payload)
+    assigned_by = (payload.assignedBy or "").strip()
+    return await sla_service.save_sla_config(workspace_id, pipeline_id, payload, assigned_by=assigned_by)
 
 
 @router.post("/{workspace_id}/pipelines/{pipeline_id}/test-email")

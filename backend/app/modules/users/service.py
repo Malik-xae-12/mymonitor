@@ -6,14 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from app.db.session import async_session_maker
 from app.modules.sla.models.sla_config import SLAConfig
+from app.modules.sla.repository import sla_repository
 from app.modules.users.repository import user_repository
 from app.modules.users.schema import (
     RoleResponse,
     UserResponse,
-    WorkspaceAssignment,
-    AssignmentUpsertRequest,
+    SlaAssignment,
 )
-from app.modules.workspaces.repository import workspace_repository
 from app.shared.constants import DEFAULT_SLA1_MINUTES, DEFAULT_SLA2_MINUTES
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,7 @@ async def assign_role_to_user(db: AsyncSession, user_id: str, role_id: str) -> b
 
 class UsersService:
     """Unified service layer managing user lifecycles, Entra ID directory syncing,
-    support role assignments (admin, l1, l2), and workspace L1/L2 team assignments."""
+    support role assignments (admin, l1, l2), and pipeline-level L1/L2 SLA assignments."""
 
     async def seed_defaults(self, admin_emails: List[str]) -> None:
         """Seed the default system roles and bootstrap administrator accounts from settings."""
@@ -51,46 +50,47 @@ class UsersService:
         """Record or update user login telemetry and Entra ID object identifier."""
         await user_repository.ensure_user(email, oid, display_name)
 
-    async def resolve_access(self, email: str) -> Tuple[str, bool, List[str]]:
-        """Resolve a user's effective role, admin privilege flag, and accessible workspace IDs."""
+    async def resolve_access(self, email: str) -> Tuple[str, bool, List[str], List[str]]:
+        """Resolve a user's effective role, admin privilege flag, accessible workspace IDs,
+        and accessible pipeline IDs. Returns (role, is_admin, workspace_ids, pipeline_ids).
+        
+        For admins: workspace_ids=[] and pipeline_ids=[] (meaning ALL access).
+        For L1/L2: scoped to only assigned workspaces/pipelines from sla_configs.
+        """
         e = (email or "").strip().lower()
         user = await user_repository.get_by_email(e)
 
         if user and user.get("role_id") == "admin":
-            return "admin", True, []
+            return "admin", True, [], []
 
-        workspace_ids = await workspace_repository.get_assigned_workspace_ids_for_user(e)
+        # Query sla_configs for workspace and pipeline assignments
+        workspace_ids = await sla_repository.get_assigned_workspace_ids_for_user(e)
+        pipeline_ids = await sla_repository.get_assigned_pipeline_ids_for_user(e)
 
+        # Determine role from sla_configs
         role = "none"
-        assignments = await workspace_repository.get_assignments_for_user(e)
-        for a in assignments:
-            if (a.get("l1_email") or "").strip().lower() == e:
+        async with async_session_maker() as session:
+            r1 = await session.execute(
+                select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l1_email) == e).limit(1)
+            )
+            if r1.scalar_one_or_none():
                 role = "l1"
-                break
-            if (a.get("l2_email") or "").strip().lower() == e:
-                role = "l2"
-
-        if role == "none":
-            async with async_session_maker() as session:
-                r1 = await session.execute(
-                    select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l1_email) == e).limit(1)
+            else:
+                r2 = await session.execute(
+                    select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l2_email) == e).limit(1)
                 )
-                if r1.scalar_one_or_none():
-                    role = "l1"
-                else:
-                    r2 = await session.execute(
-                        select(SLAConfig.pipeline_id).where(func.lower(SLAConfig.l2_email) == e).limit(1)
-                    )
-                    if r2.scalar_one_or_none():
-                        role = "l2"
+                if r2.scalar_one_or_none():
+                    role = "l2"
 
+        # Fallback to stored role if no sla_configs assignments found
         if role == "none" and user and user.get("role_id") in ("l1", "l2"):
             role = user["role_id"]
 
+        # Auto-assign role if derived from sla_configs but not yet stored
         if role in ("l1", "l2") and (not user or user.get("role_id") != role):
             await user_repository.assign_role_if_not_admin(e, role)
 
-        return role, False, workspace_ids
+        return role, False, workspace_ids, pipeline_ids
 
     async def list_users(self) -> List[UserResponse]:
         """Fetch all registered platform users with their assigned role name."""
@@ -135,46 +135,31 @@ class UsersService:
         if l2_email:
             await user_repository.assign_role_if_not_admin(l2_email, "l2")
 
-    # ---- Unified Workspace Support Team Assignments ----
+    # ---- Pipeline-Level SLA Assignment Management ----
 
-    async def list_all_assignments(self) -> List[WorkspaceAssignment]:
-        """Fetch all workspace support team assignments across all workspaces."""
-        rows = await workspace_repository.get_all_assignments()
+    async def list_all_assignments(self) -> List[SlaAssignment]:
+        """Fetch all pipeline-level SLA assignments across all workspaces."""
+        rows = await sla_repository.get_all_sla_configs()
         return [self._to_assignment_model(r) for r in rows]
 
-    async def list_assignments_for_user(self, email: str) -> List[WorkspaceAssignment]:
-        """Fetch workspace assignments for a specific support engineer (L1 or L2)."""
-        rows = await workspace_repository.get_assignments_for_user(email)
+    async def list_assignments_for_user(self, email: str) -> List[SlaAssignment]:
+        """Fetch SLA assignments for a specific support engineer (L1 or L2)."""
+        rows = await sla_repository.get_configs_for_user(email)
         return [self._to_assignment_model(r) for r in rows]
-
-    async def upsert_assignment(
-        self, payload: AssignmentUpsertRequest, assigned_by: str
-    ) -> WorkspaceAssignment:
-        """Create or update a workspace assignment with L1/L2 emails and SLA thresholds."""
-        await workspace_repository.upsert_assignment(
-            data=payload.model_dump(),
-            assigned_by=assigned_by,
-            when=_now(),
-        )
-        await self.ensure_assignment_users(payload.l1_email, payload.l2_email)
-        row = await workspace_repository.get_assignment(payload.workspace_id)
-        return self._to_assignment_model(row)
-
-    async def delete_assignment(self, workspace_id: str) -> None:
-        """Delete an assignment configuration for a workspace."""
-        await workspace_repository.delete_assignment(workspace_id)
 
     @staticmethod
-    def _to_assignment_model(row: dict) -> WorkspaceAssignment:
-        """Transform a database row dictionary into a WorkspaceAssignment schema."""
-        return WorkspaceAssignment(
+    def _to_assignment_model(row: dict) -> SlaAssignment:
+        """Transform a database row dictionary into an SlaAssignment schema."""
+        return SlaAssignment(
+            pipeline_id=row.get("pipeline_id", ""),
             workspace_id=row.get("workspace_id"),
-            workspace_name=row.get("workspace_name"),
+            pipeline_name=row.get("pipeline_name"),
             l1_email=row.get("l1_email"),
             l2_email=row.get("l2_email"),
+            l1_name=row.get("l1_name"),
+            l2_name=row.get("l2_name"),
             sla1_minutes=row.get("sla1_minutes") or DEFAULT_SLA1_MINUTES,
             sla2_minutes=row.get("sla2_minutes") or DEFAULT_SLA2_MINUTES,
-            table_config_done=bool(row.get("table_config_done")),
             assigned_by=row.get("assigned_by"),
             updated_at=row.get("updated_at"),
         )

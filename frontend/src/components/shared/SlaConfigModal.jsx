@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Clock, CheckCircle2, AlertCircle, Send, Loader2, Users, UserCheck } from 'lucide-react';
 import { listUsers } from '../../features/admin/api/adminApi';
+import { useAuth } from '../../features/auth';
 
 function getInitials(name, email) {
   if (name) {
@@ -13,6 +14,7 @@ function getInitials(name, email) {
 }
 
 export default function SlaConfigModal({ workspaceId, pipeline, isOpen, onClose, onSaved }) {
+  const { profile } = useAuth();
   const [l1Email, setL1Email] = useState('');
   const [l1Name, setL1Name] = useState('');
   const [l2Email, setL2Email] = useState('');
@@ -155,6 +157,7 @@ export default function SlaConfigModal({ workspaceId, pipeline, isOpen, onClose,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          pipelineName: pipeline?.pipelineName || pipeline?.name || pipeline?.displayName || '',
           l1Email: l1Email.trim(),
           l1Name: l1Name.trim(),
           l2Email: l2Email.trim(),
@@ -162,6 +165,7 @@ export default function SlaConfigModal({ workspaceId, pipeline, isOpen, onClose,
           slaMinutes: parseInt(sla1Minutes, 10) || 30,
           sla1Minutes: parseInt(sla1Minutes, 10) || 30,
           sla2Minutes: parseInt(sla2Minutes, 10) || 60,
+          assignedBy: profile?.email || '',
         }),
       });
 

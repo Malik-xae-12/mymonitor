@@ -133,3 +133,14 @@
 - [x] **TASK-1303**: Update `users/router.py` to handle both user setup and platform admin routes (`/api/admin/assignments`, `/api/admin/users`, `/api/admin/users/role`, `/api/roles`, `/api/users`), maintaining 100% backward compatibility.
 - [x] **TASK-1304**: Update `app_factory.py` to register `users_router` and remove `admin_router`.
 - [x] **TASK-1305**: Verify backend compilation and all API endpoints — **100% PASS**.
+
+---
+
+## Phase 14: Database Optimization & Advanced SLA Escalation
+- [x] **TASK-1401**: Eliminate local `workspaces` table in favor of live Fabric REST API discovery via `fabric_client.get_workspaces()`.
+- [x] **TASK-1402**: Consolidate `workspace_assignments` into `sla_configs` table (`pipeline_id` PK), establishing a single source of truth for pipeline display names, L1/L2 assignees, and thresholds.
+- [x] **TASK-1403**: Implement pipeline-level RBAC scoping: `users_service.resolve_access()` yields `assigned_pipeline_ids`, restricting non-admin L1/L2 engineers strictly to their assigned pipelines.
+- [x] **TASK-1404**: Implement SLA2 breach escalation: transition incident to `CRITICAL_UNRESOLVED`, dispatch alert email to both L1 and L2 leads, and broadcast `SLA2_BREACHED` over WebSockets.
+- [x] **TASK-1405**: Implement recurring 30-minute reminder alert emails for active `CRITICAL_UNRESOLVED` incidents until manually resolved.
+- [x] **TASK-1406**: Build UI pulsing `🚨 SLA2 BREACHED` badge in `PipelineRow.jsx` and real-time WebSocket state handling in `useWorkspaceMonitoring.js`.
+- [x] **TASK-1407**: Verify frontend production build (`npm run build`) and backend initialization — **100% PASS**.

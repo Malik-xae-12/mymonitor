@@ -52,8 +52,8 @@ The Monitoring Hub solves these pain points by providing an intelligent, cached,
 - **FR-3.3**: Terminal runs (`Completed`, `Failed`, `Cancelled`) must be permanently cached in SQLite. Poller skips fetching activities for cached runs, hitting Fabric only for lightweight status checks.
 - **FR-3.4**: When a previously succeeded pipeline is re-run, the system must immediately detect the new GUID Job Instance, bypass cache, stream `InProgress` status, and replace the old run row in the primary view while preserving the old run in Run History.
 
-### 3.4 Two-Tier SLA Engine & Automated Escalation
-- **FR-4.1**: Admins can configure `sla1_minutes` (L1 threshold) and `sla2_minutes` (L2 threshold) per pipeline, along with responsible engineer emails and names.
+### 3.4 Multi-Tier SLA Engine & Automated Escalation
+- **FR-4.1**: Admins configure `sla1_minutes` (L1 threshold) and `sla2_minutes` (L2 threshold) per pipeline, along with responsible engineer emails and names in `sla_configs`.
 - **FR-4.2**: When a pipeline run fails, the system must:
   - Register an incident in `sla_incidents` (`status = 'ACTIVE'`).
   - Calculate `sla_target_time = failed_at + sla1_minutes`.
@@ -64,7 +64,12 @@ The Monitoring Hub solves these pain points by providing an intelligent, cached,
   - Calculate exact overdue minutes.
   - Dispatch an urgent escalation HTML email to the L2 assignee with a pulsating red warning banner.
   - Broadcast `SLA_BREACHED` over WebSockets.
-- **FR-4.4**: Operators can mark an incident as `RESOLVED`, recording the resolver email and timestamp, clearing the alert state across the UI.
+- **FR-4.4**: If an incident remains unresolved past the SLA2 window (`now_utc >= failed_at + sla2_minutes`):
+  - Update status to `CRITICAL_UNRESOLVED`.
+  - Dispatch an urgent critical escalation email to **both L1 and L2 leads** (`[🚨 CRITICAL - SLA2 BREACHED]`).
+  - Broadcast `SLA2_BREACHED` over WebSockets.
+  - Automatically dispatch reminder alert emails to both leads every **30 minutes** until manually resolved.
+- **FR-4.5**: Operators can mark an incident as `RESOLVED`, recording the resolver email and timestamp, clearing the alert state across the UI.
 
 ### 3.5 Multi-Schedule Management & Forecasting
 - **FR-5.1**: The platform must query Fabric `/schedules` endpoints to extract all trigger definitions per pipeline.
@@ -87,10 +92,11 @@ The Monitoring Hub solves these pain points by providing an intelligent, cached,
   - Returns Root Cause, Recommended Fix, and Confidence Score.
   - Caches results by deterministic error hash to serve duplicate errors instantaneously.
 
-### 3.8 Unified User Setup, Directory & Workspace Assignments
+### 3.8 Unified User Setup, Directory & Pipeline-Level Scoping
 - **FR-8.1**: Directory search over Microsoft Entra ID and local users.
 - **FR-8.2**: Role assignment (`admin`, `l1`, `l2`) with instant permission updates.
-- **FR-8.3**: Workspace assignment associating L1/L2 support engineers and default SLA thresholds with specific workspaces (unified in `users` module).
+- **FR-8.3**: Pipeline-level assignment in `sla_configs` associating L1/L2 support engineers, pipeline display names, and SLA1/SLA2 thresholds with specific pipelines.
+- **FR-8.4**: Pipeline-level RBAC scoping ensuring L1 and L2 engineers strictly see only the workspaces and pipelines assigned to them (`assigned_pipeline_ids`).
 
 ---
 

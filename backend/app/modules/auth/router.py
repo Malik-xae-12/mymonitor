@@ -249,21 +249,21 @@ router.include_router(
 )
 
 from app.modules.auth.dependency import get_current_user
-from app.modules.auth.schema import UserProfile, WorkspaceAssignment
+from app.modules.auth.schema import UserProfile, SlaAssignment
 from app.modules.users.service import users_service
 
 
 @router.get("/me", response_model=UserProfile)
 async def get_me(user: UserProfile = Depends(get_current_user)) -> UserProfile:
-    """Returns the signed-in user's profile, resolved role, and scoped workspaces."""
+    """Returns the signed-in user's profile, resolved role, and scoped workspaces/pipelines."""
     return user
 
 
-@router.get("/my-assignments", response_model=list[WorkspaceAssignment])
+@router.get("/my-assignments", response_model=list[SlaAssignment])
 async def get_my_assignments(
     user: UserProfile = Depends(get_current_user),
-) -> list[WorkspaceAssignment]:
-    """Assignments where the caller is the L1 or L2 responsible user."""
+) -> list[SlaAssignment]:
+    """Pipeline-level SLA assignments where the caller is the L1 or L2 responsible user."""
     if user.is_admin:
         return await users_service.list_all_assignments()
     return await users_service.list_assignments_for_user(user.email)

@@ -599,7 +599,7 @@ class PipelineRepository:
                 select(SLAIncident)
                 .where(
                     SLAIncident.workspace_id == workspace_id,
-                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "RESOLVED"]),
+                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "CRITICAL_UNRESOLVED", "RESOLVED"]),
                 )
                 .order_by(SLAIncident.failed_at.desc())
             )
@@ -1117,7 +1117,7 @@ class PipelineRepository:
                 select(SLAIncident)
                 .where(
                     SLAIncident.workspace_id == workspace_id,
-                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "RESOLVED"]),
+                    SLAIncident.status.in_(["ACTIVE", "ESCALATED_L2", "CRITICAL_UNRESOLVED", "RESOLVED"]),
                 )
                 .order_by(SLAIncident.failed_at.desc())
             )

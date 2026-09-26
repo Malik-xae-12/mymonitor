@@ -115,9 +115,9 @@ The primary telemetry module responsible for ingesting, structuring, and serving
 
 ---
 
-### 2. `workspaces` — Workspace Ingestion & Role Scoping
-- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/service.py): Queries Fabric REST API for available workspaces and enriches them with local support assignments. Scopes returned workspaces based on whether the caller is an Administrator or an assigned L1/L2 engineer.
-- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/repository.py): Caches workspace metadata and queries user assignment mappings.
+### 2. `workspaces` — Live Workspace Discovery & Role Scoping
+- [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/service.py): Queries Microsoft Fabric REST API live for accessible workspaces, eliminating redundant local database tables and preventing cache staleness. Enriches workspaces with representative SLA assignment summaries from `sla_configs`. Scopes workspaces based on whether the caller is an Administrator or an assigned L1/L2 engineer.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/repository.py): Lightweight pass-through delegating RBAC scoping queries directly to `sla_repository`.
 - [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/workspaces/router.py): `GET /api/workspaces`.
 
 ---
@@ -125,54 +125,57 @@ The primary telemetry module responsible for ingesting, structuring, and serving
 ### 3. `auth` — Authentication, Entra ID SSO & JWT Lifecycle
 - [`dependency.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/dependency.py):
   - **`_get_signing_key` & `_decode_entra_token`**: Validates RS256 tokens from Microsoft Entra ID using dynamic JWKS key retrieval. Features automatic retry and cache invalidation if Microsoft rotates or expires signing keys.
-  - **`get_current_user`**: Validates the bearer token, records login telemetry, queries user RBAC status, and scopes accessible workspaces.
+  - **`get_current_user`**: Validates the bearer token, records login telemetry, queries user RBAC status via `users_service.resolve_access`, and attaches both `assigned_workspace_ids` and `assigned_pipeline_ids`.
   - **`require_admin`**: Endpoint guard enforcing Administrator privileges.
 - [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/router.py):
   - `POST /api/auth/entra-id/exchange`: Exchanges a Microsoft Entra ID token for a local JWT access and refresh token pair.
   - `POST /api/auth/jwt/refresh`: Rotates the refresh token (maintaining original session expiry) and issues a fresh access token.
   - `POST /api/auth/jwt/logout`: Revokes and deletes user refresh tokens from the database.
-  - `GET /api/auth/me`: Returns caller's profile, role, and assigned workspaces.
+  - `GET /api/auth/me`: Returns caller's profile, role, scoped workspaces, and scoped pipeline IDs.
+  - `GET /api/auth/my-assignments`: Returns pipeline-level SLA assignments where caller is L1 or L2 engineer.
 - [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/service.py): FastAPI-Users authentication manager and password verification backend.
 - [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/repository.py): User lookups by email and Entra ID Object ID (`oid`).
 - [`models/refresh_token.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/auth/models/refresh_token.py): `refresh_token` table mapping.
 
 ---
 
-### 4. `users` — Unified User Setup, Roles & Workspace Support Team Assignments
-The authoritative domain module managing all user lifecycles, security roles, Entra ID directory synchronizations, and workspace-to-support team assignments (consolidating administrative user setup into one cohesive module).
+### 4. `users` — Unified User Setup, Roles & Pipeline-Level SLA Assignments
+The authoritative domain module managing all user lifecycles, security roles, Entra ID directory synchronizations, and pipeline-level L1/L2 SLA assignments (consolidating administrative user setup into one cohesive module).
 
 - [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/service.py):
   - **User Lifecycle & Sync**: Manages user accounts, assigns roles (`admin`, `l1`, `l2`), records login timestamps, and bootstraps default system roles and admin accounts from settings.
-  - **Access & Role Resolution**: `resolve_access(email)` determines effective role (`admin`, `l1`, `l2`, `none`), admin boolean flag, and scoped workspace IDs.
-  - **Workspace Support Team Assignments**: Manages L1 and L2 support engineer assignments to workspaces (`list_all_assignments`, `list_assignments_for_user`, `upsert_assignment`, `delete_assignment`), including SLA warning and escalation breach thresholds.
+  - **Access & Role Resolution**: `resolve_access(email)` determines effective role (`admin`, `l1`, `l2`, `none`), admin boolean flag, scoped workspace IDs, and specific assigned pipeline IDs from `sla_configs`.
+  - **Pipeline-Level SLA Assignments**: Manages L1 and L2 support engineer assignments per pipeline (`list_all_assignments`, `list_assignments_for_user`), including SLA warning and escalation breach thresholds.
 - [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/repository.py): Pure SQLAlchemy 2.0 Async ORM database operations for `users`, `roles`, and `user_roles` tables (`selectinload`, `sqlite_upsert`).
 - [`models/`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/models): DeclarativeBase entities for `User`, `Role`, and `UserRole`.
 - [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/router.py):
-  - `GET /api/admin/assignments`: List all workspace assignments.
-  - `POST /api/admin/assignments`: Create or update support assignments (L1/L2 emails & SLA targets).
-  - `DELETE /api/admin/assignments/{workspace_id}`: Remove assignment.
+  - `GET /api/admin/assignments`: List all pipeline-level SLA assignments across all workspaces.
   - `GET /api/admin/users`: List registered platform users and available roles.
   - `POST /api/admin/users`: Add or update directory user with support role (`l1` or `l2`).
   - `POST /api/admin/users/role`: Update user support role.
   - `DELETE /api/admin/users/{email}`: Remove support user from team roster.
   - `GET /api/roles`: Retrieve all configurable support roles.
   - `/api/users`: FastAPI-Users profile and self-management endpoints.
-- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/schema.py): Unified schemas for `UserProfile`, `UserResponse`, `RoleResponse`, `AddUserRequest`, `SetRoleRequest`, `UsersListResponse`, `WorkspaceAssignment`, and `AssignmentUpsertRequest`.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/users/schema.py): Unified schemas for `UserProfile` (including `assigned_pipeline_ids`), `UserResponse`, `RoleResponse`, `AddUserRequest`, `SetRoleRequest`, `UsersListResponse`, and `SlaAssignment`.
 
 ---
 
-### 6. `sla` — Service Level Agreements & Alert Escalation
+### 6. `sla` — Service Level Agreements & Multi-Tier Alert Escalation
 - [`service.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/service.py):
-  - **`AlertService`**: Background watchdog loop running every 30 seconds. Detects newly failed pipeline runs, creates `ACTIVE` SLA incidents, sends immediate HTML alerts to the assigned L1 engineer via SMTP, and automatically escalates to the L2 engineer (`ESCALATED_L2`) if the failure is not resolved before the SLA 2 threshold.
-  - **`SlaService`**: Incident lifecycle management (acknowledging and resolving incidents) and test alert dispatching.
-- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/repository.py): Persistence for `sla_configs` and `sla_incidents`.
+  - **`AlertService`**: Background watchdog loop running every 5 seconds. Evaluates active incidents:
+    - **Tier 1 (Failure)**: Creates `ACTIVE` incident, dispatches immediate HTML alert to assigned L1 engineer via SMTP, and broadcasts `INCIDENT_CREATED`.
+    - **Tier 2 (SLA1 Breach)**: When `now_utc >= sla1_target`, escalates status to `ESCALATED_L2`, sends urgent escalation HTML email to L2 lead, and broadcasts `SLA_BREACHED`.
+    - **Tier 3 (SLA2 Breach)**: When `now_utc >= sla2_target`, escalates status to `CRITICAL_UNRESOLVED`, dispatches critical alert HTML email to **both L1 and L2 leads**, and broadcasts `SLA2_BREACHED`.
+    - **Automated Reminders**: Repeats reminder alert emails every 30 minutes for active `CRITICAL_UNRESOLVED` incidents until resolved.
+  - **`SlaService`**: Saves pipeline-level SLA configs and assignee details (`save_sla_config` with `pipeline_name` and `assigned_by`), incident lifecycle management (acknowledging and resolving incidents), and test alert dispatching.
+- [`repository.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/repository.py): Persistence for `sla_configs` (single source of truth for L1/L2 assignments with `pipeline_id` PK) and `sla_incidents`. Exposes `get_assigned_workspace_ids_for_user`, `get_assigned_pipeline_ids_for_user`, and `get_all_unresolved_incidents`.
 - [`router.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/router.py):
-  - `GET /api/sla/config/{workspace_id}/{pipeline_id}`: Retrieve SLA thresholds.
-  - `POST /api/sla/config/{workspace_id}/{pipeline_id}`: Save SLA thresholds and contacts.
-  - `GET /api/sla/incidents`: List all unresolved SLA incidents across the tenant.
-  - `POST /api/sla/incidents/{incident_id}/resolve`: Mark incident as resolved.
-  - `POST /api/sla/test-email`: Verify SMTP deliverability.
-- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/schema.py): Data models for SLA configurations, incident cards, and email requests.
+  - `GET /api/workspaces/{workspace_id}/pipelines/{pipeline_id}/sla`: Retrieve SLA thresholds.
+  - `POST /api/workspaces/{workspace_id}/pipelines/{pipeline_id}/sla`: Save SLA thresholds, pipeline name, and assignees.
+  - `GET /api/workspaces/incidents`: List all unresolved SLA incidents across the tenant.
+  - `POST /api/workspaces/incidents/{incident_id}/resolve`: Mark incident as resolved.
+  - `POST /api/workspaces/{workspace_id}/pipelines/{pipeline_id}/test-email`: Verify SMTP deliverability.
+- [`schema.py`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/backend/app/modules/sla/schema.py): Data models for `SlaConfigPayload` (including `pipelineName`, `assignedBy`), `IncidentResolveRequest`, and `TestEmailRequest`.
 
 ---
 

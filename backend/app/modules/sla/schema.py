@@ -12,6 +12,7 @@ class SlaConfigPayload(BaseModel):
     sla1Minutes: Optional[int] = None
     sla2Minutes: Optional[int] = None
     enabled: Optional[bool] = True
+    assignedBy: Optional[str] = None
 
 
 class IncidentResolveRequest(BaseModel):

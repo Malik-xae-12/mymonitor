@@ -4,8 +4,6 @@
 from app.modules.users.models.user import User  # noqa
 from app.modules.users.models.role import Role  # noqa
 from app.modules.auth.models.refresh_token import RefreshToken  # noqa
-from app.modules.workspaces.models.workspace import Workspace  # noqa
-from app.modules.workspaces.models.assignment import WorkspaceAssignment  # noqa
 from app.modules.pipelines.models.pipeline import Pipeline  # noqa
 from app.modules.pipelines.models.pipeline_run import PipelineRun  # noqa
 from app.modules.pipelines.models.activity_run import ActivityRun  # noqa

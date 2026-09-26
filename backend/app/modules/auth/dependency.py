@@ -179,7 +179,7 @@ async def get_current_user(
     from app.modules.users.service import users_service
 
     await users_service.record_login(email, payload.get("oid", ""), payload.get("name", ""))
-    role, is_admin, workspace_ids = await users_service.resolve_access(email)
+    role, is_admin, workspace_ids, pipeline_ids = await users_service.resolve_access(email)
 
     return UserProfile(
         email=email,
@@ -188,6 +188,7 @@ async def get_current_user(
         role=role,
         is_admin=is_admin,
         assigned_workspace_ids=workspace_ids,
+        assigned_pipeline_ids=pipeline_ids,
     )
 
 

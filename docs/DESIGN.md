@@ -81,8 +81,9 @@ In accordance with Microsoft Fluent Design, status badges utilize a soft-tint ba
 ### SLA Breach Badges
 | SLA State | Text Color | Background Tint | Border | Description |
 |---|---|---|---|---|
-| **`ACTIVE`** (L1 SLA Breach) | `#c42b1c` | `#fde7e9` | `#c42b1c`/40 | Failure recorded; L1 team notified; SLA countdown ticking. |
-| **`ESCALATED_L2`** (L2 Escalation) | `#c42b1c` | `#fde7e9` | `#c42b1c` (Solid) | SLA1 breached; escalated to L2 lead; critical intervention banner. |
+| **`ACTIVE`** (L1 SLA Window) | `#b78103` | `#fff8e1` | `#ffe082` | Failure recorded; L1 team notified; countdown ticking. |
+| **`ESCALATED_L2`** (L2 Escalation) | `#c42b1c` | `#fde7e9` | `#c42b1c` (Solid) | SLA1 breached; escalated to L2 lead; urgent breach banner. |
+| **`CRITICAL_UNRESOLVED`** (SLA2 Breach) | `#ffffff` | `#7f1d1d` (Dark Red) | `#ef4444` (Pulsing) | SLA2 breached; both L1+L2 notified; critical pulsing alert badge. |
 | **`RESOLVED`** | `#107c41` | `#dff6dd` | `#107c41`/30 | Incident acknowledged and marked resolved by engineer. |
 
 ---

@@ -15,7 +15,7 @@ import { useAuth } from './features/auth';
 import { useWorkspaceMonitoring } from './hooks/useWorkspaceMonitoring';
 
 export default function App() {
-  const { profile, role, isAdmin, logout } = useAuth();
+  const { profile, role, isAdmin, logout, assignedPipelineIds } = useAuth();
   const [allWorkspaces, setAllWorkspaces] = useState([]);
   const [workspaceId, setWorkspaceId] = useState('');
   const [currentView, setCurrentView] = useState('monitoring'); // 'monitoring' | 'table-logs' | 'table-log-config' | 'admin'
@@ -109,28 +109,30 @@ export default function App() {
 
   // 4. Compute scoped pipeline tree and metrics for non-admin users:
   //    - Admins see all parent pipelines.
-  //    - L1 users ONLY see pipelines where they are assigned as L1.
-  //    - L2 users ONLY see pipelines where they are assigned as L2.
+  //    - L1/L2 users ONLY see pipelines where they are assigned.
   const scopedPipelineTree = useMemo(() => {
     if (isAdmin || !role || role === 'none' || role === 'admin') {
       return pipelineTree;
     }
     const userEmail = (profile?.email || '').toLowerCase().trim();
-    if (!userEmail) return pipelineTree;
+    const pipeIds = assignedPipelineIds || [];
 
     return pipelineTree.filter((p) => {
-      const sla = p.slaConfig || {};
-      if (role === 'l1') {
-        const l1 = (sla.l1Email || '').toLowerCase().trim();
-        return l1 === userEmail;
+      // 1. Check if pipeline ID is in profile's assigned_pipeline_ids
+      if (pipeIds.length > 0 && pipeIds.includes(p.pipelineId)) {
+        return true;
       }
-      if (role === 'l2') {
-        const l2 = (sla.l2Email || '').toLowerCase().trim();
-        return l2 === userEmail;
+      // 2. Check per-pipeline slaConfig email match
+      if (userEmail && p.slaConfig) {
+        const l1 = (p.slaConfig.l1Email || '').toLowerCase().trim();
+        const l2 = (p.slaConfig.l2Email || '').toLowerCase().trim();
+        if (role === 'l1') return l1 === userEmail;
+        if (role === 'l2') return l2 === userEmail;
+        return l1 === userEmail || l2 === userEmail;
       }
-      return true;
+      return false;
     });
-  }, [pipelineTree, isAdmin, role, profile]);
+  }, [pipelineTree, isAdmin, role, profile, assignedPipelineIds]);
 
   const scopedMetrics = useMemo(() => {
     if (isAdmin || !role || role === 'none' || role === 'admin') {

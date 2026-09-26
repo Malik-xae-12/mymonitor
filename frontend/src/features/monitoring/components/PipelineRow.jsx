@@ -233,6 +233,43 @@ export function SlaCountdownBadge({ incident, onResolve }) {
   const targetMs = targetTime ? new Date(targetTime).getTime() : 0;
   const diffMs = targetMs - now;
 
+  if (incident.status === 'CRITICAL_UNRESOLVED') {
+    const overdueMs = Math.abs(diffMs);
+    const totalSec = Math.floor(overdueMs / 1000);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+
+    let overdueText = '';
+    if (days > 0) overdueText = `+${days}d ${hours}h`;
+    else if (hours > 0) overdueText = `+${hours}h ${minutes}m`;
+    else overdueText = `+${minutes}m`;
+
+    return (
+      <div className="inline-flex items-center gap-1.5 flex-wrap">
+        <span 
+          title="CRITICAL: SLA1 and SLA2 both breached! Escalated to L1 and L2 leads."
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#7f1d1d] text-[#ffffff] border border-[#ef4444] shadow-sm animate-pulse"
+        >
+          <AlertOctagon className="w-2.5 h-2.5 text-[#fca5a5]" />
+          <span>🚨 SLA2 BREACHED ({overdueText})</span>
+        </span>
+        {onResolve && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onResolve(incident.id);
+            }}
+            title="Acknowledge and mark incident resolved"
+            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#dc2626] hover:bg-[#b91c1c] text-white transition shadow-sm"
+          >
+            Resolve
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (incident.status === 'ESCALATED_L2' || diffMs <= 0) {
     const overdueMs = Math.abs(diffMs);
     const totalSec = Math.floor(overdueMs / 1000);

@@ -52,14 +52,17 @@ Testing levels:
 | `TC-POLL-04` | Succeeded pipeline re-run | New GUID instance detected, cache bypassed, row shows InProgress live. | **PASS** |
 | `TC-POLL-05` | Terminal run caching | Terminal runs permanently cached; 0 activity API calls made on idle ticks. | **PASS** |
 
-### Suite 5: Two-Tier SLA Alerting & Escalation
+### Suite 5: Multi-Tier SLA Alerting & Escalation
 | Test ID | Scenario | Expected Behavior | Result |
 |---|---|---|:---:|
 | `TC-SLA-01` | Pipeline run failure | Creates incident (`status = 'ACTIVE'`) and dispatches HTML alert to L1 email. | **PASS** |
 | `TC-SLA-02` | SLA watchdog loop | Evaluates active incidents every 5 seconds. | **PASS** |
 | `TC-SLA-03` | SLA1 window breach | Transitions status to `ESCALATED_L2` and dispatches urgent L2 alert email. | **PASS** |
-| `TC-SLA-04` | Operator resolution | `POST /api/sla/incidents/{id}/resolve` sets `RESOLVED` and logs resolver. | **PASS** |
+| `TC-SLA-04` | Operator resolution | `POST /api/workspaces/incidents/{id}/resolve` sets `RESOLVED` and logs resolver. | **PASS** |
 | `TC-SLA-05` | Test email verification | Verifies operational alerting deliverability to L1 or L2 email address. | **PASS** |
+| `TC-SLA-06` | SLA2 window breach | Transitions status to `CRITICAL_UNRESOLVED`, dispatches critical alert email to both L1 and L2 leads, broadcasts `SLA2_BREACHED`. | **PASS** |
+| `TC-SLA-07` | Recurring reminders | Watchdog evaluates unresolved critical incidents and repeats email notifications every 30 minutes. | **PASS** |
+| `TC-SLA-08` | Pipeline-level scoping | L1/L2 non-admin users only receive visibility of assigned pipelines in workspace tree (`assigned_pipeline_ids`). | **PASS** |
 
 ### Suite 6: Multi-Schedules & Forecasting
 | Test ID | Scenario | Expected Behavior | Result |

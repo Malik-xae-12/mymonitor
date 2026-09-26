@@ -148,16 +148,14 @@ Visualizes low-level batch runs, custom delta audit tables, and stage load metri
 ### 4. `admin` — Team Assignments & System Administration
 Administrative console for managing support operations (Admin-only).
 
-- [`components/AdminConsole.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/AdminConsole.jsx): Tabbed container housing User Management, Workspace Support Assignments, and Pipeline Support Teams.
+- [`components/AdminConsole.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/AdminConsole.jsx): Tabbed container housing User Management and Pipeline Support Teams & SLA.
 - [`components/UsersPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/UsersPage.jsx):
   - Lists registered platform users with their current support roles.
   - Provides modal for adding directory users with autocomplete search against Microsoft Graph API.
   - Enables changing user roles (`admin`, `l1`, `l2`) and revoking access.
-- [`components/WorkspaceAssignmentPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/WorkspaceAssignmentPage.jsx): Interface for assigning primary L1 and secondary L2 support teams to entire Fabric workspaces.
-- [`components/PipelineTeamsPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/PipelineTeamsPage.jsx): Fine-grained assignment interface allowing administrators to override support teams and SLA thresholds on individual parent pipelines.
+- [`components/PipelineTeamsPage.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/components/PipelineTeamsPage.jsx): Fine-grained per-pipeline assignment interface allowing administrators to configure L1 support leads, L2 escalation owners, and custom SLA1/SLA2 thresholds on individual parent pipelines.
 - [`hooks/useAdminUsers.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/hooks/useAdminUsers.js): Manages user list state, role changes, and Microsoft Graph directory search queries.
-- [`hooks/useAdminAssignments.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/hooks/useAdminAssignments.js): Manages workspace and pipeline support assignment CRUD operations.
-- [`api/adminApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/api/adminApi.js): API calls for `/api/admin/users`, `/api/admin/roles`, `/api/admin/assignments`, and `/api/directory/users/search`.
+- [`api/adminApi.js`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/features/admin/api/adminApi.js): API calls for `/api/admin/users`, `/api/admin/roles`, `/api/admin/assignments`, `/api/workspaces/{id}/pipeline-assignments`, and `/api/workspaces/{id}/pipelines/{pid}/sla`.
 
 ---
 
@@ -166,10 +164,11 @@ Administrative console for managing support operations (Admin-only).
 - **[`src/main.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/main.jsx)**: Mounts React onto `#root`, binds `MsalProvider`, and initializes `ThemeProvider`.
 - **[`src/App.jsx`](file:///c:/Users/mohammedabdulmalik.m/Documents/myapplications/monitor/mymonitor/frontend/src/App.jsx)**:
   - Top-level application shell wrapped by `AuthGate`.
+  - **Pipeline-Level Scoping**: Uses `assignedPipelineIds` from `useAuth()` to ensure L1 and L2 engineers strictly see only the pipelines assigned to them.
   - Coordinates active workspace state across features.
-  - Manages primary tab navigation:
-    1. **Monitoring**: Live hierarchical pipeline and activity run trees.
+  - Manages primary view navigation:
+    1. **Monitoring Hub**: Live hierarchical pipeline and activity run trees, metric overview cards, and real-time SLA breach alerts.
     2. **Table Logs**: Lakehouse/Warehouse Delta table telemetry and KPIs.
-    3. **SLA Incidents**: Active, escalated, and resolved failure incidents.
-    4. **Admin Console**: User roles and team assignments (accessible to Administrators).
-  - Listens for global refresh signals and coordinates real-time telemetry updates.
+    3. **Table Log Configuration Wizard**: Admin-guided column and schema mapping.
+    4. **Admin Console**: User roles and pipeline SLA team assignments (accessible to Administrators).
+  - Listens for global refresh signals and WebSockets (`INCIDENT_CREATED`, `SLA_BREACHED`, `SLA2_BREACHED`, `INCIDENT_RESOLVED`) for zero-polling real-time updates.

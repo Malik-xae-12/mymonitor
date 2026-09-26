@@ -35,13 +35,14 @@ The platform integrates enterprise single sign-on (SSO) with **Microsoft Entra I
 
 The platform enforces the principle of least privilege across three roles:
 - **`admin` (Administrator)**: Unrestricted access to tenant workspaces, user directory, role assignment, and Delta table column mappings.
-- **`l1` (L1 Support Lead)**: Access strictly scoped to assigned workspaces and pipelines where designated as L1 contact. Administrative consoles and configuration modals are masked.
-- **`l2` (L2 Escalation Owner)**: Access strictly scoped to assigned workspaces and pipelines where designated as L2 escalation owner. Administrative controls are masked.
+- **`l1` (L1 Support Lead)**: Access strictly scoped to assigned workspaces (where assigned to at least one pipeline) and within those workspaces, strictly to pipelines designated in `sla_configs` as L1 contact (`assigned_pipeline_ids`). Administrative consoles and configuration modals are masked.
+- **`l2` (L2 Escalation Owner)**: Access strictly scoped to assigned workspaces and pipelines where designated in `sla_configs` as L2 escalation owner (`assigned_pipeline_ids`). Administrative controls are masked.
 
-### Server-Side Enforcement:
+### Server-Side Enforcement & Pipeline Scoping:
 Frontend visual masking is backed by server-side verification:
-- `users_service.resolve_access()` computes accessible workspace and pipeline IDs.
-- API route guards reject unpermitted workspace access with HTTP 403 Forbidden.
+- `users_service.resolve_access()` queries `sla_configs` to compute both `assigned_workspace_ids` and `assigned_pipeline_ids`.
+- The user profile endpoint `/api/auth/me` returns these lists to drive client-side scoping in `App.jsx`.
+- Pipeline execution trees filter out non-assigned pipelines for L1 and L2 engineers, ensuring complete operational privacy across cross-functional teams.
 
 ---
 
